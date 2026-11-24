@@ -1,0 +1,23 @@
+{
+  "name": "anime-donghua",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A secure, lightweight anime and donghua discovery site built for a small Koyeb web service.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "compression": "^1.8.1",
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.1.0",
+    "helmet": "^8.1.0",
+    "mongoose": "^8.19.2"
+  }
+}

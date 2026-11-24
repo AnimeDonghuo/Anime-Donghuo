@@ -1,0 +1,73 @@
+import { randomUUID } from 'node:crypto';
+
+function duplicateEmailError() {
+  const error = new Error('Duplicate email lookup key.');
+  error.code = 11000;
+  return error;
+}
+
+export class MemoryStore {
+  #users = new Map();
+  #emailIndex = new Map();
+
+  async findUserByEmailLookup(emailLookup) {
+    const id = this.#emailIndex.get(emailLookup);
+    return id ? this.findUserById(id) : null;
+  }
+
+  async createUser(fields) {
+    if (this.#emailIndex.has(fields.emailLookup)) throw duplicateEmailError();
+    const user = {
+      id: randomUUID(),
+      emailLookup: fields.emailLookup,
+      emailCiphertext: fields.emailCiphertext,
+      displayNameCiphertext: fields.displayNameCiphertext,
+      passwordHash: fields.passwordHash,
+      tokenVersion: 0,
+      favorites: [],
+      createdAt: new Date(),
+    };
+    this.#users.set(user.id, user);
+    this.#emailIndex.set(user.emailLookup, user.id);
+    return { ...user, favorites: [...user.favorites] };
+  }
+
+  async findUserById(id) {
+    const user = this.#users.get(String(id));
+    return user ? { ...user, favorites: [...user.favorites] } : null;
+  }
+
+  async getFavorites(userId) {
+    const user = this.#users.get(String(userId));
+    return user ? [...user.favorites] : null;
+  }
+
+  async addFavorite(userId, titleId) {
+    const user = this.#users.get(String(userId));
+    if (!user) return null;
+    if (!user.favorites.includes(titleId)) {
+      user.favorites = [...user.favorites, titleId].slice(-100);
+    }
+    return [...user.favorites];
+  }
+
+  async removeFavorite(userId, titleId) {
+    const user = this.#users.get(String(userId));
+    if (!user) return null;
+    user.favorites = user.favorites.filter((favoriteId) => favoriteId !== titleId);
+    return [...user.favorites];
+  }
+
+  async invalidateSessions(userId, currentVersion) {
+    const user = this.#users.get(String(userId));
+    if (!user || user.tokenVersion !== currentVersion) return false;
+    user.tokenVersion += 1;
+    return true;
+  }
+
+  isHealthy() {
+    return true;
+  }
+
+  async close() {}
+}
