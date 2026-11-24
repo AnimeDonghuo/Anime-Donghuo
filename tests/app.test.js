@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { createApp } from '../src/app.js';
+import { catalogItems, publicTitle } from '../src/catalog.js';
 import { createConfig } from '../src/config.js';
 import { MemoryStore } from '../src/stores/memory-store.js';
 import { lookupEmail } from '../src/security.js';
@@ -44,7 +45,31 @@ test('health, readiness, and homepage are served safely', async () => {
   assert.equal(readyResponse.status, 200);
   assert.match(homeResponse.headers.get('content-security-policy'), /script-src 'self'/);
   assert.equal(homeResponse.headers.get('x-powered-by'), null);
-  assert.match(await homeResponse.text(), /Perfect<br>World/);
+  const homeHtml = await homeResponse.text();
+  assert.match(homeHtml, /Perfect<br>World/);
+  assert.match(homeHtml, /anime-donghua-mark\.jpg/);
+});
+
+test('navigation destinations work when opened directly as separate pages', async () => {
+  const paths = ['/trending', '/updates', '/donghua', '/anime', '/ongoing', '/movies', '/categories', '/continue-watching', '/my-list', '/profile', '/genre/action'];
+  const responses = await Promise.all(paths.map((path) => fetch(`${baseUrl}${path}`)));
+  for (const response of responses) {
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type'), /text\/html/);
+    assert.match(await response.text(), /id="routeMain"/);
+  }
+  const unknown = await fetch(`${baseUrl}/not-a-page`);
+  assert.equal(unknown.status, 404);
+});
+
+test('public catalogue titles retain artwork and newest-entry metadata', () => {
+  const mapped = publicTitle({
+    ...catalogItems[0],
+    imageUrl: '/assets/perfect-world-poster.jpg',
+    addedAt: '2026-11-24T10:00:00.000Z',
+  });
+  assert.equal(mapped.imageUrl, '/assets/perfect-world-poster.jpg');
+  assert.equal(mapped.addedAt, '2026-11-24T10:00:00.000Z');
 });
 
 test('catalogue supports bounded filters and returns only public fields', async () => {
@@ -61,9 +86,14 @@ test('catalogue supports bounded filters and returns only public fields', async 
   assert.ok(ongoingPayload.items.every((item) => item.status === 'ongoing'));
   const moviesResponse = await fetch(`${baseUrl}/api/catalog?format=movie&limit=48`);
   assert.ok((await moviesResponse.json()).items.length >= 3);
+  const newestResponse = await fetch(`${baseUrl}/api/catalog?sort=newest&limit=5`);
+  assert.equal(newestResponse.status, 200);
+  assert.equal((await newestResponse.json()).items.length, 5);
 
   const invalid = await fetch(`${baseUrl}/api/catalog?type=pirate`);
   assert.equal(invalid.status, 400);
+  const invalidSort = await fetch(`${baseUrl}/api/catalog?sort=oldest`);
+  assert.equal(invalidSort.status, 400);
 });
 
 test('account creation requires CSRF, stores encrypted profile values, and supports saved titles', async () => {

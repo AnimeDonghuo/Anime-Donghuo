@@ -238,10 +238,11 @@ export function createApp({ store, config }) {
     const status = request.query.status;
     const section = request.query.section;
     const genre = typeof request.query.genre === 'string' ? request.query.genre.trim().toLowerCase() : '';
+    const sort = request.query.sort;
     const limit = parsePositiveInteger(request.query.limit, 24, 48);
     const offset = parsePositiveInteger(request.query.offset, 0, 1000);
 
-    if (query.length > 100 || limit === null || offset === null) {
+    if (query.length > 100 || limit === null || offset === null || (sort !== undefined && sort !== 'newest')) {
       return sendValidationError(response, 'Invalid catalogue filters.');
     }
     if (type !== undefined && !['anime', 'donghua'].includes(type)) {
@@ -260,7 +261,7 @@ export function createApp({ store, config }) {
       return sendValidationError(response, 'Unknown genre.');
     }
 
-    const filtered = catalogItems.filter((item) => {
+    let filtered = catalogItems.filter((item) => {
       const searchable = `${item.title} ${item.description} ${item.genres.join(' ')}`.toLowerCase();
       return (!query || searchable.includes(query))
         && (!type || item.type === type)
@@ -269,6 +270,21 @@ export function createApp({ store, config }) {
         && (!section || item.sections.includes(section))
         && (!genre || item.genres.some((itemGenre) => itemGenre.toLowerCase() === genre));
     });
+    if (sort === 'newest') {
+      filtered = filtered
+        .map((item, index) => {
+          const value = item.addedAt || item.createdAt;
+          const date = typeof value === 'string' || value instanceof Date ? new Date(value) : null;
+          return { item, index, time: date && Number.isFinite(date.getTime()) ? date.getTime() : null };
+        })
+        .sort((left, right) => {
+          if (left.time !== null && right.time !== null) return right.time - left.time || left.index - right.index;
+          if (left.time !== null) return -1;
+          if (right.time !== null) return 1;
+          return left.index - right.index;
+        })
+        .map(({ item }) => item);
+    }
     response.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
     return response.json({
       items: filtered.slice(offset, offset + limit).map(publicTitle),
@@ -408,6 +424,14 @@ export function createApp({ store, config }) {
       }
     },
   }));
+
+  app.get(['/trending', '/updates', '/donghua', '/anime', '/ongoing', '/movies', '/categories', '/continue-watching', '/my-list', '/profile'], (_request, response) => {
+    response.set('Cache-Control', 'no-cache').sendFile(`${publicDirectory}/index.html`);
+  });
+  app.get('/genre/:slug', (request, response, next) => {
+    if (!/^[a-z0-9-]{1,40}$/i.test(request.params.slug)) return next();
+    return response.set('Cache-Control', 'no-cache').sendFile(`${publicDirectory}/index.html`);
+  });
 
   app.use((request, response) => {
     if (request.path.startsWith('/api/')) return response.status(404).json({ error: 'Endpoint not found.' });

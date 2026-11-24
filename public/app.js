@@ -7,6 +7,11 @@ const searchResults = document.getElementById('searchResults');
 
 const state = {
   catalog: new Map(),
+  featured: [],
+  featuredIndex: 0,
+  featuredId: null,
+  featuredTimer: null,
+  featuredSignature: '',
   favorites: new Set(),
   user: null,
   csrfToken: null,
@@ -37,8 +42,52 @@ function makeButton(label, action, className = 'dialog-button', data = {}) {
   return button;
 }
 
+function artworkUrl(title) {
+  const raw = title?.imageUrl || title?.artworkUrl || (typeof title?.artwork === 'string' ? title.artwork : title?.artwork?.url);
+  if (typeof raw !== 'string' || !raw.trim() || raw.length > 2048) return '';
+  try {
+    const parsed = new URL(raw, window.location.origin);
+    if (parsed.origin !== window.location.origin || !['https:', 'http:'].includes(parsed.protocol) || parsed.username || parsed.password) return '';
+    return parsed.href;
+  } catch {
+    return '';
+  }
+}
+
+function appendArtwork(container, title, className = 'catalog-artwork') {
+  const src = artworkUrl(title);
+  if (!src) return false;
+  const image = element('img', className);
+  image.src = src;
+  image.alt = title.title ? `${title.title} artwork` : 'Title artwork';
+  image.loading = 'lazy';
+  image.decoding = 'async';
+  image.addEventListener('error', () => {
+    image.remove();
+    container.classList.remove('has-artwork');
+    const orb = container.querySelector('.hero-orb');
+    if (orb) orb.hidden = false;
+    if (container.classList.contains('art') && !container.querySelector('.art-label')) {
+      const initials = String(title.title || '').split(/\s+/).filter(Boolean).slice(0, 3).map((word) => word.slice(0, 8)).join(' ');
+      container.append(element('div', 'art-label', initials.toUpperCase()));
+    }
+  }, { once: true });
+  container.classList.add('has-artwork');
+  container.append(image);
+  return true;
+}
+
 function toast(message) {
-  if (typeof originalNotify === 'function') originalNotify(message);
+  if (typeof originalNotify === 'function') {
+    originalNotify(message);
+    return;
+  }
+  const notice = document.getElementById('toast');
+  if (!notice) return;
+  notice.textContent = String(message || '');
+  notice.classList.add('show');
+  window.clearTimeout(window.toastTimer);
+  window.toastTimer = window.setTimeout(() => notice.classList.remove('show'), 2200);
 }
 
 async function csrfToken() {
@@ -102,7 +151,73 @@ function saveGuestFavorites() {
 function updateFeaturedButton() {
   const button = document.querySelector('.hero .actions .btn:not(.primary)');
   if (!button) return;
-  button.textContent = state.favorites.has('perfect-world') ? '♥  My List' : '＋  My List';
+  const id = state.featuredId || button.dataset.id;
+  button.dataset.id = id || '';
+  button.textContent = id && state.favorites.has(id) ? '♥  My List' : '＋  My List';
+}
+
+function renderFeatured(index = state.featuredIndex) {
+  const title = state.featured[index];
+  if (!title) return;
+  state.featuredIndex = index;
+  state.featuredId = title.id;
+  const hero = document.querySelector('.hero');
+  const heading = hero?.querySelector('h1');
+  const description = hero?.querySelector('.hero-copy > p');
+  const tags = hero?.querySelector('.tags');
+  const rating = hero?.querySelector('.rating');
+  const artwork = hero?.querySelector('.hero-art');
+  const watchButton = hero?.querySelector('.actions .btn.primary');
+  const dots = hero?.querySelector('.hero-dots');
+  if (!hero || !heading || !description || !tags || !rating || !artwork || !watchButton || !dots) return;
+
+  heading.textContent = title.title;
+  description.textContent = title.description || 'Discover the story, characters, and latest catalogue details.';
+  rating.textContent = Number.isFinite(title.rating) ? `★ ${title.rating.toFixed(1)}` : '★ Featured';
+  hero.classList.toggle('hero--anime', title.type === 'anime');
+  tags.replaceChildren();
+  [title.type === 'donghua' ? 'Donghua' : 'Anime', ...(title.genres || []).slice(0, 3)]
+    .forEach((tag) => tags.append(element('span', 'tag', tag)));
+
+  artwork.querySelector('.hero-image')?.remove();
+  artwork.classList.remove('has-artwork');
+  appendArtwork(artwork, title, 'hero-image');
+  const orb = artwork.querySelector('.hero-orb');
+  if (orb) orb.hidden = Boolean(artwork.querySelector('.hero-image'));
+  watchButton.dataset.id = title.id;
+  const listButton = hero.querySelector('.actions .btn:not(.primary)');
+  if (listButton) listButton.dataset.id = title.id;
+
+  dots.replaceChildren();
+  state.featured.forEach((item, dotIndex) => {
+    const dot = makeButton('', 'featured-select', 'hero-dot', { index: dotIndex });
+    dot.setAttribute('aria-label', `Show featured title ${dotIndex + 1}: ${item.title}`);
+    dot.setAttribute('aria-current', String(dotIndex === index));
+    dots.append(dot);
+  });
+  updateFeaturedButton();
+}
+
+function setFeaturedTitles(items) {
+  const next = (Array.isArray(items) ? items : []).slice(0, 5);
+  if (!next.length) return;
+  const signature = JSON.stringify(next.map((item) => [item.id, item.title, item.addedAt, item.imageUrl, item.rating]));
+  if (signature === state.featuredSignature) return;
+  const activeId = state.featured[state.featuredIndex]?.id;
+  state.featured = next;
+  state.featuredSignature = signature;
+  const activeIndex = next.findIndex((item) => item.id === activeId);
+  renderFeatured(activeIndex >= 0 ? activeIndex : 0);
+  startFeaturedRotation();
+}
+
+function startFeaturedRotation() {
+  if (state.featuredTimer) window.clearInterval(state.featuredTimer);
+  if (state.featured.length < 2) return;
+  state.featuredTimer = window.setInterval(() => {
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+    renderFeatured((state.featuredIndex + 1) % state.featured.length);
+  }, 7000);
 }
 
 function getDialog() {
@@ -154,11 +269,22 @@ function titleFromCard(card) {
 
 function showTitleDetails(title) {
   const { content } = createDialog(title.title, '', title.type === 'donghua' ? 'DONGHUA' : 'ANIME');
+  if (artworkUrl(title)) {
+    const imageFrame = element('div', 'detail-artwork');
+    appendArtwork(imageFrame, title, 'detail-artwork-image');
+    content.append(imageFrame);
+  }
   const meta = element('div', 'dialog-meta');
   const type = title.type === 'donghua' ? 'Donghua' : 'Anime';
   const format = title.format === 'movie' ? 'Movie' : 'Series';
   const status = title.status ? title.status[0].toUpperCase() + title.status.slice(1) : 'Catalogue';
-  [type, format, status, Number.isFinite(title.rating) ? `★ ${title.rating.toFixed(1)}` : '']
+  [
+    type,
+    format,
+    status,
+    Number.isFinite(title.episodeCount) && title.format !== 'movie' ? `${title.episodeCount} episodes` : '',
+    Number.isFinite(title.rating) ? `★ ${title.rating.toFixed(1)}` : '',
+  ]
     .filter(Boolean)
     .forEach((label) => meta.append(element('span', 'dialog-chip', label)));
   content.append(meta);
@@ -229,9 +355,67 @@ async function openTitleByName(name, mode = 'details') {
 
 function makeBrowseItem(title) {
   const button = makeButton('', 'open-title', 'browse-item', { id: title.id });
-  button.append(element('strong', '', title.title));
-  button.append(element('small', '', `${title.type === 'donghua' ? 'Donghua' : 'Anime'} · ${title.format === 'movie' ? 'Movie' : 'Series'} · ${title.status}`));
+  if (artworkUrl(title)) appendArtwork(button, title, 'browse-item-art');
+  const copy = element('span', 'browse-item-copy');
+  copy.append(element('strong', '', title.title));
+  copy.append(element('small', '', `${title.type === 'donghua' ? 'Donghua' : 'Anime'} · ${title.format === 'movie' ? 'Movie' : 'Series'} · ${title.status}`));
+  button.append(copy);
   return button;
+}
+
+function createPosterCard(title, index = 0, ranked = false) {
+  const card = element('article', 'poster');
+  card.tabIndex = 0;
+  card.setAttribute('role', 'button');
+  card.setAttribute('aria-label', `Open ${title.title} details`);
+  const art = element('div', 'art');
+  const hue = (index * 41 + (title.type === 'donghua' ? 205 : 285)) % 360;
+  art.style.setProperty('--c1', `hsl(${hue} 48% 34%)`);
+  art.style.setProperty('--c2', `hsl(${(hue + 46) % 360} 42% 13%)`);
+  art.style.setProperty('--glow', `hsl(${(hue + 18) % 360} 88% 68%)`);
+  if (!appendArtwork(art, title)) {
+    const initials = title.title.split(/\s+/).filter(Boolean).slice(0, 3).map((word) => word.slice(0, 8)).join(' ');
+    art.append(element('div', 'art-label', initials.toUpperCase()));
+  }
+  if (ranked && index < 3) art.append(element('span', 'rank', `♛ ${index + 1}`));
+  const info = element('div', 'poster-info');
+  info.append(element('div', 'poster-title', title.title));
+  const labels = [title.type === 'donghua' ? 'Donghua' : 'Anime', title.format === 'movie' ? 'Movie' : 'Series'];
+  if (title.status) labels.push(title.status[0].toUpperCase() + title.status.slice(1));
+  if (Number.isFinite(title.episodeCount) && title.format !== 'movie') labels.push(`${title.episodeCount} eps`);
+  if (Number.isFinite(title.rating)) labels.push(`★ ${title.rating.toFixed(1)}`);
+  info.append(element('div', 'poster-sub', labels.join(' · ')));
+  card.append(art, info);
+  return card;
+}
+
+function renderHomeCollections(items) {
+  const sections = [
+    { selector: '#trending .cards', key: 'trending', ranked: true },
+    { selector: '#donghua .cards', key: 'donghua' },
+    { selector: '#anime .cards', key: 'anime' },
+  ];
+  sections.forEach(({ selector, key, ranked }) => {
+    const grid = document.querySelector(selector);
+    if (!grid) return;
+    const titles = items.filter((title) => title.sections?.includes(key)).slice(0, 6);
+    const additions = [];
+    titles.forEach((title, index) => {
+      const existing = [...grid.querySelectorAll('.poster')].find((card) => {
+        const name = card.querySelector('.poster-title')?.textContent?.trim();
+        return name && titleByName(name)?.id === title.id;
+      });
+      if (existing) {
+        if (artworkUrl(title)) existing.replaceWith(createPosterCard(title, index, ranked));
+        return;
+      }
+      additions.push({ title, index });
+    });
+    additions.reverse().forEach(({ title, index }) => {
+      if (grid.children.length >= 6) grid.lastElementChild.remove();
+      grid.prepend(createPosterCard(title, index, ranked));
+    });
+  });
 }
 
 function filterButton(label, key, value, selected) {
@@ -371,6 +555,7 @@ async function submitAuth(form) {
     state.user = data.user;
     await syncGuestFavorites();
     document.getElementById('animeDonghuaDialog')?.close();
+    await renderCurrentPage();
     toast(state.authMode === 'register' ? 'Your account is ready.' : 'You are signed in.');
   } catch (error) {
     message.textContent = error.message || 'Unable to complete sign in.';
@@ -408,6 +593,7 @@ async function toggleFavorite(id) {
     const title = state.catalog.get(id);
     if (title) showTitleDetails(title);
   }
+  if (normalizedPath() === '/my-list' || normalizedPath() === '/profile') await renderCurrentPage();
   toast(wasSaved ? 'Removed from My List.' : 'Added to My List.');
 }
 
@@ -485,14 +671,17 @@ function showNotificationAction(message) {
 window.notify = showNotificationAction;
 window.filterTitles = search;
 window.openSearch = function openSearchWithResults() {
-  originalOpenSearch();
+  if (typeof originalOpenSearch === 'function') originalOpenSearch();
+  else searchPanel.classList.add('open');
   searchPanel.setAttribute('role', 'dialog');
   searchPanel.setAttribute('aria-modal', 'true');
   searchPanel.setAttribute('aria-labelledby', 'searchHeading');
   search(searchInput.value);
+  searchInput.focus();
 };
 window.closeSearch = function closeSearchWithState() {
-  originalCloseSearch();
+  if (typeof originalCloseSearch === 'function') originalCloseSearch();
+  else searchPanel.classList.remove('open');
   searchPanel.removeAttribute('aria-modal');
 };
 
@@ -501,6 +690,12 @@ async function handleAction(button) {
   switch (action) {
     case 'close-dialog':
       document.getElementById('animeDonghuaDialog')?.close();
+      break;
+    case 'featured-select':
+      renderFeatured(Number(button.dataset.index));
+      break;
+    case 'navigate':
+      if (button.dataset.path?.startsWith('/')) window.location.assign(button.dataset.path);
       break;
     case 'open-title':
       window.closeSearch();
@@ -525,6 +720,7 @@ async function handleAction(button) {
       state.favorites = new Set(guestFavorites());
       updateFeaturedButton();
       document.getElementById('animeDonghuaDialog')?.close();
+      await renderCurrentPage();
       toast('You have signed out.');
       break;
     case 'auth-mode':
@@ -550,6 +746,25 @@ async function handleAction(button) {
 document.addEventListener('click', (event) => {
   const target = event.target instanceof Element ? event.target : null;
   if (!target) return;
+
+  if (target.closest('.icon-btn[aria-label="Search"]')) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    window.openSearch();
+    return;
+  }
+  if (target.closest('.icon-btn[aria-label="Notifications"]')) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    showNotificationAction('No new notifications');
+    return;
+  }
+  if (target.closest('.close-search')) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    window.closeSearch();
+    return;
+  }
 
   const actionButton = target.closest('[data-action]');
   if (actionButton) {
@@ -577,37 +792,6 @@ document.addEventListener('click', (event) => {
     return;
   }
 
-  const quick = target.closest('.quick a');
-  if (quick) {
-    const icon = quick.querySelector('.qicon')?.textContent || '';
-    const label = quick.textContent.replace(icon, '').trim();
-    const browseActions = {
-      Popular: () => showBrowse({ heading: 'Trending titles', filters: { section: 'trending' } }),
-      Ongoing: () => showBrowse({ heading: 'Ongoing series', filters: { status: 'ongoing' } }),
-      Movies: () => showBrowse({ heading: 'Anime & donghua movies', filters: { format: 'movie' } }),
-      Categories: () => showBrowse({ heading: 'Browse categories', filters: {}, categories: true }),
-    };
-    if (browseActions[label]) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      void browseActions[label]().catch((error) => toast(error.message || 'The catalogue could not be opened.'));
-    }
-    return;
-  }
-
-  const bottom = target.closest('.bottom a');
-  if (bottom) {
-    const label = bottom.textContent.trim();
-    if (label.includes('My List')) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      showMyList();
-    } else if (label.includes('Profile')) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      showAccount();
-    }
-  }
 }, true);
 
 document.addEventListener('keydown', (event) => {
@@ -651,10 +835,163 @@ function enableCardKeyboard() {
   }
 }
 
+const pageDefinitions = {
+  '/trending': { title: 'Trending Now', description: 'The titles viewers are watching right now.', filters: { section: 'trending' } },
+  '/updates': { title: 'Latest Updates', description: 'Recently updated anime and donghua titles.', filters: { section: 'updates' } },
+  '/donghua': { title: 'Popular Donghua', description: 'Explore Chinese animation series and films.', filters: { type: 'donghua' } },
+  '/anime': { title: 'Popular Anime', description: 'Browse anime series and movies.', filters: { type: 'anime' } },
+  '/ongoing': { title: 'Ongoing Series', description: 'Follow series with new episodes to come.', filters: { status: 'ongoing' } },
+  '/movies': { title: 'Movies', description: 'Anime and donghua films in the catalogue.', filters: { format: 'movie' } },
+  '/continue-watching': { title: 'Continue Watching', description: 'Pick up where you left off.', filters: { section: 'continue' } },
+};
+
+function normalizedPath() {
+  const path = window.location.pathname.replace(/\/+$/, '') || '/';
+  return path === '/index.html' ? '/' : path;
+}
+
+function updateActiveNavigation(path) {
+  document.querySelectorAll('[data-route]').forEach((link) => {
+    const active = link.dataset.route === path || (path === '/movies' && link.dataset.route === '/anime');
+    link.classList.toggle('active', active);
+    if (active) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
+  });
+}
+
+function pageHeader(container, title, description) {
+  const header = element('div', 'route-page-header');
+  const copy = element('div');
+  copy.append(element('h1', 'route-page-title', title));
+  copy.append(element('p', 'route-page-copy', description));
+  header.append(copy);
+  container.append(header);
+}
+
+function emptyPage(container, message) {
+  container.append(element('div', 'route-page-empty', message));
+}
+
+function makePageGrid(container, titles) {
+  if (!titles.length) {
+    emptyPage(container, 'There are no titles in this section yet. Please check back soon.');
+    return;
+  }
+  const grid = element('div', 'cards');
+  titles.forEach((title, index) => grid.append(createPosterCard(title, index)));
+  container.append(grid);
+}
+
+function slugifyGenre(genre) {
+  return genre.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+async function renderCurrentPage() {
+  const path = normalizedPath();
+  const home = document.getElementById('home');
+  const page = document.getElementById('routeMain');
+  updateActiveNavigation(path);
+  if (path === '/') {
+    home.hidden = false;
+    page.hidden = true;
+    document.title = 'Anime Donghua — Anime & Donghua';
+    return;
+  }
+
+  home.hidden = true;
+  page.hidden = false;
+  page.replaceChildren();
+
+  if (path === '/my-list') {
+    pageHeader(page, 'My List', 'Your saved anime and donghua, all in one place.');
+    const titles = [...state.favorites].map((id) => state.catalog.get(id)).filter(Boolean);
+    makePageGrid(page, titles);
+    if (!titles.length) {
+      const explore = element('a', 'route-link-button', 'Explore trending titles');
+      explore.href = '/trending';
+      page.append(explore);
+    }
+    document.title = 'My List | Anime Donghua';
+    return;
+  }
+
+  if (path === '/profile') {
+    pageHeader(page, 'Profile', 'Manage your Anime Donghua account and saved titles.');
+    if (state.user) {
+      const profile = element('div', 'profile-card route-profile-card');
+      profile.append(element('div', 'profile-name', state.user.displayName || 'Anime Donghua fan'));
+      profile.append(element('div', 'profile-email', state.user.email || ''));
+      profile.append(makeButton(`My List (${state.favorites.size})`, 'navigate', 'dialog-button primary', { path: '/my-list' }));
+      profile.append(makeButton('Sign out', 'logout', 'dialog-button'));
+      page.append(profile);
+    } else {
+      emptyPage(page, 'Sign in to sync your saved titles across devices.');
+      page.append(makeButton('Sign in or create an account', 'account', 'dialog-button primary'));
+    }
+    document.title = 'Profile | Anime Donghua';
+    return;
+  }
+
+  if (path === '/categories') {
+    pageHeader(page, 'Browse Categories', 'Choose a genre to find your next series.');
+    const genres = [...new Set([...state.catalog.values()].flatMap((title) => title.genres || []))].sort((a, b) => a.localeCompare(b));
+    const list = element('div', 'category-list');
+    genres.forEach((genre) => {
+      const link = element('a', 'category-link', genre);
+      link.href = `/genre/${encodeURIComponent(slugifyGenre(genre))}`;
+      list.append(link);
+    });
+    if (genres.length) page.append(list);
+    else emptyPage(page, 'Genres will appear here when the catalogue is available.');
+    document.title = 'Categories | Anime Donghua';
+    return;
+  }
+
+  let definition = pageDefinitions[path];
+  if (path.startsWith('/genre/')) {
+    const slug = decodeURIComponent(path.slice('/genre/'.length)).toLowerCase();
+    const genre = [...state.catalog.values()].flatMap((title) => title.genres || []).find((item) => slugifyGenre(item) === slug);
+    if (!genre) {
+      pageHeader(page, 'Category Not Found', 'This genre is not in the current catalogue.');
+      emptyPage(page, 'Try choosing another category.');
+      return;
+    }
+    definition = { title: genre, description: `Titles in the ${genre} category.`, filters: { genre } };
+  }
+  if (!definition) return;
+
+  pageHeader(page, definition.title, definition.description);
+  const params = new URLSearchParams({ limit: '48', sort: 'newest' });
+  Object.entries(definition.filters).forEach(([key, value]) => params.set(key, value));
+  try {
+    const data = await request(`/api/catalog?${params.toString()}`);
+    makePageGrid(page, data.items);
+  } catch (error) {
+    emptyPage(page, error.message || 'The catalogue could not be loaded. Please try again.');
+  }
+  document.title = `${definition.title} | Anime Donghua`;
+}
+
+async function refreshCatalog() {
+  try {
+    const data = await request('/api/catalog?limit=48&sort=newest', { cache: 'no-store' });
+    state.catalog = new Map(data.items.map((item) => [item.id, item]));
+    renderHomeCollections(data.items);
+    setFeaturedTitles(data.items);
+    if (normalizedPath() !== '/') await renderCurrentPage();
+  } catch {
+    // Keep the last good catalogue visible when a refresh is temporarily unavailable.
+  }
+}
+
 async function initialize() {
   enableCardKeyboard();
-  const catalogTask = request('/api/catalog?limit=48')
-    .then((data) => { state.catalog = new Map(data.items.map((item) => [item.id, item])); })
+  const catalogTask = request('/api/catalog?limit=48&sort=newest')
+    .then((data) => {
+      state.catalog = new Map(data.items.map((item) => [item.id, item]));
+      renderHomeCollections(data.items);
+      setFeaturedTitles(data.items);
+    })
     .catch(() => {});
   const csrfTask = csrfToken().catch(() => {});
   const userTask = request('/api/auth/me')
@@ -663,6 +1000,8 @@ async function initialize() {
   await Promise.all([catalogTask, csrfTask, userTask]);
   state.favorites = new Set(guestFavorites().filter((id) => state.catalog.has(id)));
   await syncGuestFavorites();
+  await renderCurrentPage();
+  window.setInterval(refreshCatalog, 60_000);
 }
 
 void initialize();

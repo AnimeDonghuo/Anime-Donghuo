@@ -115,6 +115,10 @@ export const catalogItems = Object.freeze(catalog.map((item) => Object.freeze({
 export const catalogById = new Map(catalogItems.map((item) => [item.id, item]));
 
 export function publicTitle(item) {
+  const imageUrl = item.imageUrl || item.artworkUrl || (typeof item.artwork === 'string' ? item.artwork : item.artwork?.url);
+  const candidateDate = item.addedAt || item.createdAt;
+  const addedDate = typeof candidateDate === 'string' || candidateDate instanceof Date ? new Date(candidateDate) : null;
+  const addedAt = addedDate && Number.isFinite(addedDate.getTime()) ? addedDate.toISOString() : undefined;
   return {
     id: item.id,
     title: item.title,
@@ -124,6 +128,9 @@ export function publicTitle(item) {
     episodeCount: item.episodeCount,
     rating: item.rating,
     genres: [...item.genres],
+    sections: [...(item.sections || [])],
     description: item.description,
+    ...(typeof imageUrl === 'string' && imageUrl.length <= 2048 ? { imageUrl } : {}),
+    ...(addedAt ? { addedAt } : {}),
   };
 }
