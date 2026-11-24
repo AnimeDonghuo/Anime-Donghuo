@@ -33,14 +33,22 @@ footer{padding:25px 4.5%;border-top:1px solid #ffffff12;color:#777b98;text-align
 @media(max-width:900px){nav{gap:14px;margin-left:5px}.cards{grid-template-columns:repeat(4,minmax(0,1fr))}.quick{grid-template-columns:repeat(3,1fr)}.art{height:190px}.updates{grid-template-columns:1fr 1fr}}
 @media(max-width:600px){header{height:64px;padding:0 17px;gap:10px}.logo{font-size:21px}nav{display:none}.header-actions{gap:12px}.hero{margin:0;min-height:490px;border-radius:0 0 22px 22px;padding:35px 22px 30px;align-items:flex-end}.hero-art{width:100%;height:65%;right:-20%;top:0;opacity:.65}.hero-copy{max-width:100%}.hero h1{font-size:49px;letter-spacing:-2px}.hero p{font-size:13px;max-width:320px}.quick{margin:17px 16px 27px;gap:9px;grid-template-columns:repeat(3,1fr)}.quick a{padding:13px 5px;font-size:11px}.quick .qicon{font-size:22px}section{margin:25px 16px 30px}.section-head h2{font-size:18px}.cards{grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}.art{height:155px;padding:9px}.art-label{font-size:15px}.poster-info{padding:8px}.poster-title{font-size:12px}.poster-sub{font-size:10px}.rank{font-size:10px;padding:4px 6px}.continue{grid-template-columns:1fr}.thumb{width:100px;height:70px}.updates{grid-template-columns:1fr}.update-art{width:70px;height:65px}.bottom{display:flex;position:fixed;bottom:0;left:0;right:0;z-index:20;justify-content:space-around;padding:10px 5px calc(10px + env(safe-area-inset-bottom));background:#0c0e1df2;border-top:1px solid #34304f;backdrop-filter:blur(18px)}.bottom a{color:#aaaac4;text-decoration:none;text-align:center;font-size:10px;font-weight:650}.bottom a span{display:block;font-size:20px;margin-bottom:3px}.bottom a.active{color:#d17bff}footer{padding-bottom:105px}}
 </style>
-<link rel="stylesheet" href="/app.css">
+<link rel="stylesheet" href="/app.css?v=mobile-recovery-2">
+<style>
+.logo,.logo:visited,.logo:hover{color:var(--text)!important;text-decoration:none!important}
+.logo{display:flex;align-items:center;gap:4px}
+.logo .logo-anime{color:var(--text)!important}
+.logo span:not(.logo-anime){color:var(--purple)}
+@media(max-width:760px){html,body{width:100vw!important;max-width:100vw!important;min-width:320px;overflow-x:hidden!important}.app{width:100vw!important;max-width:none!important;min-width:0!important;margin:0!important}}
+@media(max-width:600px){header,.hero{width:100%!important;min-width:0!important}.hero{margin:0!important}.quick{grid-template-columns:repeat(3,minmax(0,1fr))}.cards{grid-template-columns:repeat(3,minmax(0,1fr))}}
+</style>
 </head>
 <body>
 <div class="app">
 <header>
   <a class="logo" href="/"><img class="playmark" src="/assets/anime-donghua-mark.jpg" alt=""><span class="logo-anime">Anime</span><span>Donghua</span></a>
   <nav aria-label="Main navigation"><a data-route="/" class="active" href="/">Home</a><a data-route="/trending" href="/trending">Trending</a><a data-route="/updates" href="/updates">Latest Updates</a><a data-route="/donghua" href="/donghua">Donghua</a><a data-route="/anime" href="/anime">Anime</a></nav>
-  <div class="header-actions"><button class="icon-btn" aria-label="Search" onclick="openSearch()">⌕</button><button class="icon-btn" aria-label="Notifications" onclick="notify('No new notifications')">♧</button><div class="avatar">影</div></div>
+  <div class="header-actions"><button class="icon-btn" type="button" aria-label="Search">⌕</button><button class="icon-btn" type="button" aria-label="Notifications">♧</button><div class="avatar">影</div></div>
 </header>
 
 <main id="home">
@@ -76,12 +84,12 @@ footer{padding:25px 4.5%;border-top:1px solid #ffffff12;color:#777b98;text-align
   <section id="trending">
     <div class="section-head"><h2>🔥 &nbsp;Trending Now</h2><a class="see" href="/trending">See all →</a></div>
     <div class="cards">
-      <article class="poster" onclick="notify('Perfect World selected')"><div class="art" style="--c1:#164b78;--c2:#11132c;--glow:#54bfff"><span class="rank">♛ 1</span><div class="art-label">PERFECT<br>WORLD</div></div><div class="poster-info"><div class="poster-title">Perfect World</div><div class="poster-sub">Donghua · 200+ eps</div></div></article>
-      <article class="poster" onclick="notify('BTTH selected')"><div class="art" style="--c1:#9b352c;--c2:#211326;--glow:#ff7754"><span class="rank">♛ 2</span><div class="art-label">BTTH</div></div><div class="poster-info"><div class="poster-title">Battle Through the Heavens</div><div class="poster-sub">Donghua · Ongoing</div></div></article>
-      <article class="poster" onclick="notify('Soul Land selected')"><div class="art" style="--c1:#155c91;--c2:#28134d;--glow:#65caff"><span class="rank">♛ 3</span><div class="art-label">SOUL<br>LAND</div></div><div class="poster-info"><div class="poster-title">Soul Land</div><div class="poster-sub">Donghua · Completed</div></div></article>
-      <article class="poster" onclick="notify('One Piece selected')"><div class="art" style="--c1:#e49b34;--c2:#713326;--glow:#ffe18b"><div class="art-label">ONE<br>PIECE</div></div><div class="poster-info"><div class="poster-title">One Piece</div><div class="poster-sub">Anime · Ongoing</div></div></article>
-      <article class="poster" onclick="notify('Jujutsu Kaisen selected')"><div class="art" style="--c1:#7e68b8;--c2:#17172f;--glow:#d4c4ff"><div class="art-label">JUJUTSU<br>KAISEN</div></div><div class="poster-info"><div class="poster-title">Jujutsu Kaisen</div><div class="poster-sub">Anime · Action</div></div></article>
-      <article class="poster" onclick="notify('Demon Slayer selected')"><div class="art" style="--c1:#a93231;--c2:#171329;--glow:#ff625e"><div class="art-label">DEMON<br>SLAYER</div></div><div class="poster-info"><div class="poster-title">Demon Slayer</div><div class="poster-sub">Anime · Fantasy</div></div></article>
+      <article class="poster"><div class="art" style="--c1:#164b78;--c2:#11132c;--glow:#54bfff"><span class="rank">♛ 1</span><div class="art-label">PERFECT<br>WORLD</div></div><div class="poster-info"><div class="poster-title">Perfect World</div><div class="poster-sub">Donghua · 200+ eps</div></div></article>
+      <article class="poster"><div class="art" style="--c1:#9b352c;--c2:#211326;--glow:#ff7754"><span class="rank">♛ 2</span><div class="art-label">BTTH</div></div><div class="poster-info"><div class="poster-title">Battle Through the Heavens</div><div class="poster-sub">Donghua · Ongoing</div></div></article>
+      <article class="poster"><div class="art" style="--c1:#155c91;--c2:#28134d;--glow:#65caff"><span class="rank">♛ 3</span><div class="art-label">SOUL<br>LAND</div></div><div class="poster-info"><div class="poster-title">Soul Land</div><div class="poster-sub">Donghua · Completed</div></div></article>
+      <article class="poster"><div class="art" style="--c1:#e49b34;--c2:#713326;--glow:#ffe18b"><div class="art-label">ONE<br>PIECE</div></div><div class="poster-info"><div class="poster-title">One Piece</div><div class="poster-sub">Anime · Ongoing</div></div></article>
+      <article class="poster"><div class="art" style="--c1:#7e68b8;--c2:#17172f;--glow:#d4c4ff"><div class="art-label">JUJUTSU<br>KAISEN</div></div><div class="poster-info"><div class="poster-title">Jujutsu Kaisen</div><div class="poster-sub">Anime · Action</div></div></article>
+      <article class="poster"><div class="art" style="--c1:#a93231;--c2:#171329;--glow:#ff625e"><div class="art-label">DEMON<br>SLAYER</div></div><div class="poster-info"><div class="poster-title">Demon Slayer</div><div class="poster-sub">Anime · Fantasy</div></div></article>
     </div>
   </section>
 
@@ -125,14 +133,8 @@ footer{padding:25px 4.5%;border-top:1px solid #ffffff12;color:#777b98;text-align
 <nav class="bottom" aria-label="Mobile navigation">
   <a data-route="/" class="active" href="/"><span>⌂</span>Home</a><a data-route="/trending" href="/trending"><span>⌕</span>Explore</a><a data-route="/my-list" href="/my-list"><span>♡</span>My List</a><a data-route="/updates" href="/updates"><span>⇩</span>Updates</a><a data-route="/profile" href="/profile"><span>◉</span>Profile</a>
 </nav>
-<div class="search-panel" id="searchPanel"><button class="close-search" type="button" aria-label="Close search">✕</button><h2 id="searchHeading">Find your next series</h2><input id="searchInput" placeholder="Search anime, donghua, genres..." oninput="filterTitles(this.value)"><div id="searchResults" style="margin-top:20px;color:#c8c5dd"></div></div>
+<div class="search-panel" id="searchPanel"><button class="close-search" type="button" aria-label="Close search">✕</button><h2 id="searchHeading">Find your next series</h2><input id="searchInput" placeholder="Search anime, donghua, genres..."><div id="searchResults" style="margin-top:20px;color:#c8c5dd"></div></div>
 <div class="toast" id="toast"></div>
-<script>
-function notify(message){const t=document.getElementById('toast');t.textContent=message;t.classList.add('show');clearTimeout(window.toastTimer);window.toastTimer=setTimeout(()=>t.classList.remove('show'),2200)}
-function openSearch(){document.getElementById('searchPanel').classList.add('open');setTimeout(()=>document.getElementById('searchInput').focus(),100)}
-function closeSearch(){document.getElementById('searchPanel').classList.remove('open')}
-function filterTitles(q){const titles=[...document.querySelectorAll('.poster-title')].map(x=>x.textContent);const found=titles.filter(x=>x.toLowerCase().includes(q.toLowerCase()));document.getElementById('searchResults').textContent=q?(found.length?found.join('  ·  '):'No matching titles in this demo catalogue.'):'Start typing to search the demo catalogue.'}
-</script>
-<script src="/app.js" defer></script>
+<script src="/app.js?v=mobile-recovery-2" defer></script>
 </body>
 </html>

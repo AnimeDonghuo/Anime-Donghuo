@@ -418,9 +418,9 @@ export function createApp({ store, config }) {
     fallthrough: true,
     maxAge: config.production ? '1h' : 0,
     setHeaders(response, filePath) {
-      if (filePath.endsWith('/index.html')) response.setHeader('Cache-Control', 'no-cache');
+      if (filePath.endsWith('/index.html')) response.setHeader('Cache-Control', 'no-cache, must-revalidate');
       if (filePath.endsWith('/app.js') || filePath.endsWith('/app.css')) {
-        response.setHeader('Cache-Control', config.production ? 'public, max-age=3600' : 'no-cache');
+        response.setHeader('Cache-Control', 'no-cache, must-revalidate');
       }
     },
   }));

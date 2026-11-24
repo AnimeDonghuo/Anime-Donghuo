@@ -48,6 +48,22 @@ test('health, readiness, and homepage are served safely', async () => {
   const homeHtml = await homeResponse.text();
   assert.match(homeHtml, /Perfect<br>World/);
   assert.match(homeHtml, /anime-donghua-mark\.jpg/);
+  assert.match(homeHtml, /app\.css\?v=mobile-recovery-2/);
+  assert.match(homeHtml, /app\.js\?v=mobile-recovery-2/);
+  assert.match(homeHtml, /width:100vw!important;max-width:none!important/);
+  assert.doesNotMatch(homeHtml, /\son(?:click|input)=/);
+});
+
+test('versioned frontend assets bypass stale browser cache', async () => {
+  const [cssResponse, jsResponse] = await Promise.all([
+    fetch(`${baseUrl}/app.css?v=mobile-recovery-2`),
+    fetch(`${baseUrl}/app.js?v=mobile-recovery-2`),
+  ]);
+  assert.equal(cssResponse.status, 200);
+  assert.equal(jsResponse.status, 200);
+  assert.match(cssResponse.headers.get('cache-control'), /no-cache/);
+  assert.match(jsResponse.headers.get('cache-control'), /no-cache/);
+  assert.match(await jsResponse.text(), /function renderFeatured/);
 });
 
 test('navigation destinations work when opened directly as separate pages', async () => {
