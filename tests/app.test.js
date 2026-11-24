@@ -55,8 +55,8 @@ test('health, readiness, and homepage are served safely', async () => {
   const heroAsset = await fetch(`${baseUrl}/assets/anime-donghua-blue-dragon.png`);
   assert.equal(heroAsset.status, 200);
   assert.match(heroAsset.headers.get('content-type'), /image\/png/);
-  assert.match(homeHtml, /app\.css\?v=anime-donghua-v2/);
-  assert.match(homeHtml, /app\.js\?v=anime-donghua-v2/);
+  assert.match(homeHtml, /app\.css\?v=anime-donghua-v3/);
+  assert.match(homeHtml, /app\.js\?v=anime-donghua-v3/);
   assert.match(homeResponse.headers.get('content-security-policy'), /img-src[^;]*https:\/\/i\.ibb\.co/);
   assert.match(homeResponse.headers.get('content-security-policy'), /frame-src[^;]*https:\/\/.*dailymotion\.com/);
   assert.match(homeResponse.headers.get('content-security-policy'), /frame-src[^;]*https:\/\/.*rumble\.com/);
@@ -71,8 +71,8 @@ test('health, readiness, and homepage are served safely', async () => {
 
 test('versioned frontend assets bypass stale browser cache', async () => {
   const [cssResponse, jsResponse] = await Promise.all([
-    fetch(`${baseUrl}/app.css?v=anime-donghua-v2`),
-    fetch(`${baseUrl}/app.js?v=anime-donghua-v2`),
+    fetch(`${baseUrl}/app.css?v=anime-donghua-v3`),
+    fetch(`${baseUrl}/app.js?v=anime-donghua-v3`),
   ]);
   assert.equal(cssResponse.status, 200);
   assert.equal(jsResponse.status, 200);
@@ -278,4 +278,64 @@ test('account creation requires CSRF, stores encrypted profile values, and suppo
   assert.equal(logoutResponse.status, 200);
   const afterLogout = await fetch(`${baseUrl}/api/auth/me`, { headers: { Cookie: combinedCookie } });
   assert.equal(afterLogout.status, 401);
+});
+
+test('latest Animexin releases are served as English-only public players', async () => {
+  const releaseStore = new MemoryStore();
+  const feed = {
+    getLatest: async () => ({
+      enabled: true,
+      source: 'feed',
+      fetchedAt: '2026-11-24T12:00:00.000Z',
+      total: 1,
+      playable: 1,
+      items: [{
+        id: 'shrouding-the-heavens-episode-191',
+        title: 'Shrouding the Heavens Episode 191 English Sub',
+        series: 'Shrouding the Heavens',
+        episode: 191,
+        pageUrl: 'https://animexin.dev/shrouding-the-heavens-episode-191/',
+        thumbnailUrl: 'https://cdn.animexin.dev/shrouding-191.jpg',
+        publishedAt: '2026-11-24T12:00:00.000Z',
+        playerCount: 2,
+        players: [
+          { provider: 'Dailymotion', label: 'Hardsub English Dailymotion AX', embedUrl: 'https://www.dailymotion.com/embed/video/x8english', watchUrl: 'https://www.dailymotion.com/video/x8english', episode: 191 },
+          { provider: 'Rumble', label: 'Hardsub English Rumble AX', embedUrl: 'https://rumble.com/embed/venglish/', watchUrl: 'https://rumble.com/venglish.html', episode: 191 },
+        ],
+        downloads: [{ provider: 'MediaFire', label: 'MediaFire 1080p', url: 'https://www.mediafire.com/file/abc123/file.mp4/file' }],
+      }],
+    }),
+  };
+  const releaseApp = createApp({ store: releaseStore, config, releaseFeed: feed });
+  const releaseServer = releaseApp.listen(0, '127.0.0.1');
+  await new Promise((resolve, reject) => {
+    releaseServer.once('listening', resolve);
+    releaseServer.once('error', reject);
+  });
+  const releaseBase = `http://127.0.0.1:${releaseServer.address().port}`;
+  try {
+    const listResponse = await fetch(`${releaseBase}/api/releases?limit=3`);
+    assert.equal(listResponse.status, 200);
+    const payload = await listResponse.json();
+    assert.equal(payload.items.length, 1);
+    assert.equal(payload.items[0].playerCount, 2);
+    assert.deepEqual(payload.items[0].players.map((player) => player.provider), ['Dailymotion', 'Rumble']);
+    assert.equal(payload.items[0].downloads.length, 1);
+    assert.equal('pageUrl' in payload.items[0], false);
+
+    const detailResponse = await fetch(`${releaseBase}/api/releases/shrouding-the-heavens-episode-191`);
+    assert.equal(detailResponse.status, 200);
+    assert.equal((await detailResponse.json()).item.id, 'shrouding-the-heavens-episode-191');
+
+    const missing = await fetch(`${releaseBase}/api/releases/unknown-release`);
+    assert.equal(missing.status, 404);
+    const invalidLimit = await fetch(`${releaseBase}/api/releases?limit=99`);
+    assert.equal(invalidLimit.status, 400);
+    const page = await fetch(`${releaseBase}/releases`);
+    assert.equal(page.status, 200);
+    assert.match(await page.text(), /id="updatesList"/);
+  } finally {
+    await new Promise((resolve) => releaseServer.close(resolve));
+    await releaseStore.close();
+  }
 });

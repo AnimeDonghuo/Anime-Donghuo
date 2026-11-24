@@ -105,3 +105,25 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
 
 /* Authorized Dailymotion and Rumble embeds are only rendered after server-side URL validation. */
 .stream-player-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:14px;width:100%;margin:14px 0}.stream-player-card{display:grid;align-content:start;gap:10px;min-width:0;padding:12px;border:1px solid #292d49;border-radius:15px;background:#0d1020}.stream-player-heading{margin:0;color:#eee8ff;font-size:14px}.stream-player-card iframe{display:block;width:100%;aspect-ratio:16/9;border:0;border-radius:10px;background:#050610}.stream-player-watch{justify-self:start;color:#cdb5ff;font-size:12px;font-weight:750;text-decoration:none}.stream-player-watch:hover{text-decoration:underline}.player-page .stream-player-list{position:relative;z-index:1}
+.release-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,250px),1fr));gap:14px}
+.release-grid-empty{padding:20px;border:1px solid #292d49;border-radius:14px;background:#111426;color:#a7a8c2;line-height:1.55}
+.release-card{display:flex;flex-direction:column;overflow:hidden;cursor:pointer;border:1px solid #292d49;border-radius:16px;background:#111426;transition:border-color .2s,transform .2s}
+.release-card:hover,.release-card:focus-visible{border-color:#a855f7;transform:translateY(-2px)}
+.release-art{position:relative;display:grid;place-items:center;aspect-ratio:16/9;background:linear-gradient(140deg,#312a63,#12152c);overflow:hidden}
+.release-art .release-thumb{width:100%;height:100%;object-fit:cover}
+.release-art-fallback{padding:10px;color:#cdb5ff;font-size:12px;font-weight:750;text-align:center}
+.release-body{display:grid;gap:8px;padding:11px 12px 13px}
+.release-title{font-size:13px;line-height:1.35;color:#eee8ff}
+.release-meta{display:flex;flex-wrap:wrap;gap:6px}
+.release-note{color:#a7a8c2;font-size:11px;line-height:1.45}
+.release-downloads{margin-top:14px;padding:12px;border:1px solid #292d49;border-radius:14px;background:#0d1020}
+.release-downloads-heading{margin:0 0 8px;font-size:13px;color:#eee8ff}
+.release-download-list{display:flex;flex-wrap:wrap;gap:8px}
+.release-download-link{margin:0}
+.release-page{display:grid;gap:16px}
+.release-page-head{display:grid;grid-template-columns:minmax(0,260px) minmax(0,1fr);gap:18px;align-items:start}
+.release-page-art{aspect-ratio:16/9;border-radius:14px}
+.release-page-copy{display:grid;gap:10px;min-width:0}
+.release-page-title{margin:0;font-size:clamp(20px,3vw,27px);letter-spacing:-.5px}
+.release-page .stream-player-list{grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr))}
+@media(max-width:700px){.release-page-head{grid-template-columns:minmax(0,1fr)}}

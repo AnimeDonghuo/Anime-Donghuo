@@ -67,6 +67,10 @@ export function createConfig(env = process.env) {
   } catch {
     throw new Error('ANIMEXIN_BASE_URL must be an HTTPS origin, for example https://animexin.dev.');
   }
+  const animexinRefreshMinutes = Number.parseInt(env.ANIMEXIN_REFRESH_MINUTES || '30', 10);
+  if (!Number.isInteger(animexinRefreshMinutes) || animexinRefreshMinutes < 5 || animexinRefreshMinutes > 1_440) {
+    throw new Error('ANIMEXIN_REFRESH_MINUTES must be an integer between 5 and 1440.');
+  }
   const animexinImageHosts = [...new Set((env.ANIMEXIN_IMAGE_HOSTS || '')
     .split(',')
     .map((host) => host.trim().toLowerCase())
@@ -146,6 +150,7 @@ export function createConfig(env = process.env) {
     animexinEnabled,
     animexinBaseUrl,
     animexinImageHosts: Object.freeze(animexinImageHosts),
+    animexinRefreshMinutes,
     posterSyncEnabled: env.POSTER_SYNC_ENABLED === 'true' || (production && env.POSTER_SYNC_ENABLED !== 'false'),
     sessionCookieName: production ? '__Host-anime-donghua_session' : 'anime_donghua_session',
     csrfCookieName: production ? '__Host-anime-donghua_csrf' : 'anime_donghua_csrf',

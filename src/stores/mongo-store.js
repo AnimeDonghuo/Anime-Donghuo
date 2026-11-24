@@ -43,6 +43,58 @@ const titleMediaSchema = new mongoose.Schema({
 
 const TitleMedia = mongoose.models.AnimeDonghuaTitleMedia || mongoose.model('AnimeDonghuaTitleMedia', titleMediaSchema);
 
+const releaseDownloadSchema = new mongoose.Schema({
+  provider: { type: String, maxlength: 40, required: true },
+  label: { type: String, maxlength: 120 },
+  url: { type: String, maxlength: 2048, required: true },
+}, { _id: false, strict: 'throw' });
+
+const releasePlayerSchema = new mongoose.Schema({
+  provider: { type: String, enum: ['Dailymotion', 'Rumble'], required: true },
+  label: { type: String, maxlength: 120 },
+  episode: { type: Number, min: 1, max: 99999 },
+  embedUrl: { type: String, maxlength: 2048, required: true },
+  watchUrl: { type: String, maxlength: 2048, required: true },
+}, { _id: false, strict: 'throw' });
+
+const animexinReleaseSchema = new mongoose.Schema({
+  releaseId: { type: String, required: true, unique: true, immutable: true, maxlength: 140 },
+  title: { type: String, maxlength: 220, required: true },
+  series: { type: String, maxlength: 200 },
+  episode: { type: Number, min: 1, max: 99999 },
+  pageUrl: { type: String, maxlength: 2048, required: true },
+  thumbnailUrl: { type: String, maxlength: 2048 },
+  publishedAt: { type: String, maxlength: 40 },
+  players: { type: [releasePlayerSchema], default: [] },
+  scrapedDownloads: { type: [releaseDownloadSchema], default: [] },
+  addedDownloads: { type: [releaseDownloadSchema], default: [] },
+}, {
+  timestamps: true,
+  versionKey: false,
+  strict: 'throw',
+  minimize: true,
+});
+
+const AnimexinRelease = mongoose.models.AnimeDonghuaAnimexinRelease
+  || mongoose.model('AnimeDonghuaAnimexinRelease', animexinReleaseSchema);
+
+function asRelease(document) {
+  if (!document) return null;
+  return {
+    id: document.releaseId,
+    title: document.title,
+    series: document.series,
+    episode: document.episode,
+    pageUrl: document.pageUrl,
+    thumbnailUrl: document.thumbnailUrl,
+    publishedAt: document.publishedAt,
+    players: document.players || [],
+    scrapedDownloads: document.scrapedDownloads || [],
+    addedDownloads: document.addedDownloads || [],
+    updatedAt: document.updatedAt,
+  };
+}
+
 function asUser(document) {
   if (!document) return null;
   return {
@@ -179,6 +231,58 @@ export class MongoStore {
       playerUpdatedAt: document.playerUpdatedAt,
       updatedAt: document.updatedAt,
     };
+  }
+
+  async listAnimexinReleases(limit = 12) {
+    const documents = await AnimexinRelease.find({})
+      .sort({ publishedAt: -1, createdAt: -1 })
+      .limit(Math.max(1, Math.min(Number(limit) || 12, 40)))
+      .lean();
+    return documents.map(asRelease);
+  }
+
+  async getAnimexinRelease(id) {
+    return asRelease(await AnimexinRelease.findOne({ releaseId: String(id) }).lean());
+  }
+
+  async saveAnimexinReleases(releases) {
+    let saved = 0;
+    for (const release of Array.isArray(releases) ? releases : []) {
+      const releaseId = String(release?.id || '').trim();
+      if (!releaseId) continue;
+      await AnimexinRelease.updateOne(
+        { releaseId },
+        {
+          $set: {
+            title: release.title,
+            series: release.series || null,
+            episode: Number.isInteger(release.episode) ? release.episode : null,
+            pageUrl: release.pageUrl,
+            thumbnailUrl: release.thumbnailUrl || null,
+            publishedAt: release.publishedAt || null,
+            players: Array.isArray(release.players) ? release.players : [],
+            scrapedDownloads: Array.isArray(release.downloads) ? release.downloads : [],
+          },
+          $setOnInsert: { addedDownloads: [] },
+        },
+        { upsert: true, runValidators: true },
+      );
+      saved += 1;
+    }
+    return saved;
+  }
+
+  async addAnimexinReleaseDownload(id, download) {
+    const releaseId = String(id);
+    const existing = await AnimexinRelease.findOne({ releaseId, 'addedDownloads.url': download.url }).lean();
+    if (existing) return { release: asRelease(existing), added: false };
+    const document = await AnimexinRelease.findOneAndUpdate(
+      { releaseId },
+      { $push: { addedDownloads: { $each: [download], $slice: -10 } } },
+      { new: true, runValidators: true },
+    ).lean();
+    if (!document) return null;
+    return { release: asRelease(document), added: true };
   }
 
   isHealthy() {

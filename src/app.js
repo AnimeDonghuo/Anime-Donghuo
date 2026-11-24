@@ -5,6 +5,8 @@ import helmet from 'helmet';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { catalogById, catalogItems, publicTitle } from './catalog.js';
+import { createAnimexinReleaseFeed } from './animexin-feed.js';
+import { publicRelease, refreshAnimexinReleases } from './releases.js';
 import { createTelegramWebhookHandler } from './telegram-bot.js';
 import {
   constantTimeStringEqual,
@@ -154,10 +156,11 @@ function parsePositiveInteger(value, fallback, maximum) {
   return parsed;
 }
 
-export function createApp({ store, config, fetchImpl = fetch }) {
+export function createApp({ store, config, fetchImpl = fetch, releaseFeed = null }) {
   if (!store || !config) throw new Error('createApp requires a store and configuration.');
 
   const animexinHost = new URL(config.animexinBaseUrl).hostname;
+  const feed = releaseFeed || createAnimexinReleaseFeed({ config, fetchImpl });
   const app = express();
   app.disable('x-powered-by');
   if (config.trustProxy) app.set('trust proxy', config.trustProxy);
@@ -432,6 +435,54 @@ export function createApp({ store, config, fetchImpl = fetch }) {
     return response.json({ ok: true });
   });
 
+  app.get('/api/releases', async (request, response) => {
+    const limit = parsePositiveInteger(request.query.limit, 6, 12);
+    if (limit === null) return sendValidationError(response, 'Invalid release limit.');
+    if (!config.animexinEnabled) {
+      return response.json({ enabled: false, items: [], total: 0 });
+    }
+    let items = [];
+    try {
+      items = await store.listAnimexinReleases(limit);
+    } catch {
+      items = [];
+    }
+    if (items.length === 0 && feed) {
+      try {
+        await refreshAnimexinReleases({ store, feed, limit });
+        items = await store.listAnimexinReleases(limit);
+      } catch {
+        items = [];
+      }
+    }
+    const releases = items.map((release) => publicRelease(release, config)).filter(Boolean);
+    response.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=120');
+    return response.json({
+      enabled: true,
+      source: 'animexin',
+      items: releases,
+      total: releases.length,
+      playable: releases.filter((release) => release.playerCount > 0).length,
+    });
+  });
+
+  app.get('/api/releases/:id', async (request, response) => {
+    const id = String(request.params.id || '');
+    if (!/^[\w%.-]{1,140}$/.test(id)) return sendValidationError(response, 'Invalid release id.');
+    if (!config.animexinEnabled) return response.status(404).json({ error: 'Release not found.' });
+    let release = null;
+    try {
+      release = await store.getAnimexinRelease(decodeURIComponent(id));
+    } catch {
+      release = null;
+    }
+    if (!release) return response.status(404).json({ error: 'Release not found.' });
+    const item = publicRelease(release, config);
+    if (!item) return response.status(404).json({ error: 'Release not found.' });
+    response.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=120');
+    return response.json({ item });
+  });
+
   app.get('/api/me/favorites', requireUser(store, config), async (request, response) => {
     noStore(response);
     const favorites = await store.getFavorites(request.user.id);
@@ -470,7 +521,10 @@ export function createApp({ store, config, fetchImpl = fetch }) {
     },
   }));
 
-  app.get(['/trending', '/updates', '/donghua', '/anime', '/ongoing', '/movies', '/categories', '/continue-watching', '/my-list', '/profile', '/discover', '/schedule'], (_request, response) => {
+  app.get(['/trending', '/updates', '/releases', '/donghua', '/anime', '/ongoing', '/movies', '/categories', '/continue-watching', '/my-list', '/profile', '/discover', '/schedule'], (_request, response) => {
+    response.set('Cache-Control', 'no-cache').sendFile(`${publicDirectory}/index.html`);
+  });
+  app.get(['/release/:id', '/releases/:id'], (_request, response) => {
     response.set('Cache-Control', 'no-cache').sendFile(`${publicDirectory}/index.html`);
   });
   app.get(['/title/:id', '/watch/:id'], (request, response, next) => {

@@ -3,6 +3,8 @@ import { createApp } from './src/app.js';
 import { createConfig } from './src/config.js';
 import { createStore } from './src/database.js';
 import { syncCatalogPosters } from './src/posters.js';
+import { createAnimexinReleaseFeed } from './src/animexin-feed.js';
+import { refreshAnimexinReleases } from './src/releases.js';
 import { registerAppTelegramCommands } from './src/telegram-bot.js';
 import { launchTelegramBot } from './src/server/services/telegram-bot.js';
 import { createPublisherConfig, createPublisherRepository } from './src/server/telegram-integration.js';
@@ -10,10 +12,27 @@ import { createPublisherConfig, createPublisherRepository } from './src/server/t
 async function start() {
   const config = createConfig();
   const store = await createStore(config);
-  const app = createApp({ store, config });
+  const releaseFeed = createAnimexinReleaseFeed({ config });
+  const app = createApp({ store, config, releaseFeed });
   const server = app.listen(config.port, '0.0.0.0', () => {
     console.log(`Anime Donghua listening on 0.0.0.0:${config.port} (${config.nodeEnv})`);
   });
+
+  let releaseTimer = null;
+  if (config.animexinEnabled) {
+    // Keep the latest Animexin releases warm so a visitor request never waits on
+    // an upstream scrape, and so a scheduled episode appears without a deploy.
+    const refreshReleases = () => {
+      void refreshAnimexinReleases({ store, feed: releaseFeed, limit: 6 })
+        .then(({ refreshed }) => {
+          if (refreshed) console.log(`Animexin releases refreshed (${refreshed}).`);
+        })
+        .catch(() => console.error('Animexin release refresh did not complete.'));
+    };
+    refreshReleases();
+    releaseTimer = setInterval(refreshReleases, config.animexinRefreshMinutes * 60 * 1000);
+    releaseTimer.unref?.();
+  }
 
   if (config.posterSyncEnabled) {
     void syncCatalogPosters({ store, config })
@@ -38,6 +57,7 @@ async function start() {
     }, 10_000);
     forceExit.unref();
 
+    if (releaseTimer) clearInterval(releaseTimer);
     try { bot?.stop?.(signal); } catch {}
     try { await new Promise((resolve) => server.close(resolve)); } catch {}
     try { await publisherRepository?.close?.(); } catch {}

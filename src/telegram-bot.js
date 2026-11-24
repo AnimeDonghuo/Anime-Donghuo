@@ -1,7 +1,9 @@
 import { catalogById, catalogItems, safeMediaFireUrl } from './catalog.js';
 import { uploadImageToImgBB } from './image-hosting.js';
 import { constantTimeStringEqual } from './security.js';
+import { createAnimexinReleaseFeed } from './animexin-feed.js';
 import { extractAnimexinPlayers, normalizeTitle } from './posters.js';
+import { publicRelease } from './releases.js';
 import { mergeStreamingEntries, safeStreamingLink } from './server/services/streaming-service.js';
 
 const maxImageBytes = 10 * 1024 * 1024;
@@ -13,7 +15,7 @@ function parseCommand(message) {
     : (message.reply_to_message?.caption || message.reply_to_message?.text);
   if (typeof commandText !== 'string') return null;
   const firstLine = commandText.split(/\r?\n/, 1)[0].trim();
-  const match = firstLine.match(/^\/(poster|catalogposter|download|help|animexinplayers)(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]*))?$/i);
+  const match = firstLine.match(/^\/(poster|catalogposter|download|help|animexinplayers|releases|releasedownload)(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]*))?$/i);
   return match ? { command: match[1].toLowerCase(), args: (match[2] || '').trim() } : null;
 }
 
@@ -344,6 +346,71 @@ async function handleAnimexinPlayers(ctx, { config, store, repository, publisher
   return true;
 }
 
+function releaseCommandSummary(release) {
+  const episode = Number.isInteger(release.episode) ? ` · Episode ${release.episode}` : '';
+  return `${release.title}${episode} — ${release.playerCount} English player${release.playerCount === 1 ? '' : 's'}`;
+}
+
+async function handleAnimexinReleases(ctx, { config, store, fetchImpl }) {
+  const command = parseCommand(ctx.message || {});
+  if (!['releases', 'releasedownload'].includes(command?.command)) return false;
+  if (!config.animexinEnabled) {
+    await ctx.reply('Animexin is disabled by ANIMEXIN_ENABLED=false. No release data was read.');
+    return true;
+  }
+
+  if (command.command === 'releasedownload') {
+    const [releaseId, ...urlParts] = command.args.split(/\s+/);
+    const url = safeMediaFireUrl(urlParts.join(' ').trim());
+    if (!releaseId || !url) {
+      await ctx.reply('Use /releasedownload <release-id> <https://www.mediafire.com/file/...> for a file you own or may distribute.');
+      return true;
+    }
+    const release = await store.getAnimexinRelease(releaseId);
+    if (!release) {
+      await ctx.reply(`No stored Animexin release matched “${releaseId}”. Run /releases to see the current IDs.`);
+      return true;
+    }
+    const result = await store.addAnimexinReleaseDownload(releaseId, {
+      provider: 'MediaFire',
+      label: `${release.series || release.title} MediaFire`,
+      url,
+    });
+    await ctx.reply(result?.added
+      ? `MediaFire download saved for ${release.title}. Visitors now see it beside the English Dailymotion/Rumble players.`
+      : `That MediaFire link is already saved for ${release.title}.`);
+    return true;
+  }
+
+  let refreshed = 0;
+  if (typeof store.saveAnimexinReleases === 'function') {
+    try {
+      const feed = createAnimexinReleaseFeed({ config, fetchImpl });
+      const latest = await feed.getLatest({ limit: 6 });
+      refreshed = await store.saveAnimexinReleases(latest.items);
+    } catch {
+      refreshed = 0;
+    }
+  }
+  const releases = await store.listAnimexinReleases(6);
+  if (!releases.length) {
+    await ctx.reply('No Animexin releases could be read right now. The site keeps the last stored list until the next successful refresh.');
+    return true;
+  }
+  const lines = releases.map((release, index) => {
+    const item = publicRelease(release, config);
+    const downloads = item?.downloads?.length || 0;
+    return `${index + 1}. ${releaseCommandSummary({ ...release, playerCount: item?.playerCount || 0 })}${downloads ? ` · ${downloads} download${downloads === 1 ? '' : 's'}` : ''}\n   ID: ${release.id}`;
+  });
+  await ctx.reply([
+    `Latest Animexin releases (${refreshed ? `${refreshed} refreshed` : 'stored list'}):`,
+    ...lines,
+    'Only English-labelled Dailymotion and Rumble servers are playable on the site.',
+    'Add an authorized file with /releasedownload <release-id> <MediaFire URL>.',
+  ].join('\n'));
+  return true;
+}
+
 /** Register the existing static-catalog admin tools and the Animexin player importer on Telegraf. */
 export function registerAppTelegramCommands(bot, { config, store, repository = null, publisherConfig = null, fetchImpl = fetch } = {}) {
   if (!bot || !config || !store) throw new Error('Telegram command registration requires a bot, app config, and store.');
@@ -351,7 +418,7 @@ export function registerAppTelegramCommands(bot, { config, store, repository = n
     const message = ctx.message;
     if (!message) return next();
     const command = parseCommand(message);
-    if (!command || !['poster', 'catalogposter', 'download', 'animexinplayers'].includes(command.command)) return next();
+    if (!command || !['poster', 'catalogposter', 'download', 'animexinplayers', 'releases', 'releasedownload'].includes(command.command)) return next();
     const userId = String(ctx.from?.id || '');
     if (!config.telegramAdminIds.includes(userId)) return next();
     if (ctx.chat?.type !== 'private') {
@@ -360,6 +427,10 @@ export function registerAppTelegramCommands(bot, { config, store, repository = n
     }
     if (command.command === 'animexinplayers') {
       await handleAnimexinPlayers(ctx, { config, store, repository, publisherConfig, fetchImpl });
+      return;
+    }
+    if (command.command === 'releases' || command.command === 'releasedownload') {
+      await handleAnimexinReleases(ctx, { config, store, fetchImpl });
       return;
     }
     if (command.command === 'download') {

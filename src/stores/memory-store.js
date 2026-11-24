@@ -10,6 +10,7 @@ export class MemoryStore {
   #users = new Map();
   #emailIndex = new Map();
   #titleMedia = new Map();
+  #releases = new Map();
 
   async findUserByEmailLookup(emailLookup) {
     const id = this.#emailIndex.get(emailLookup);
@@ -85,6 +86,58 @@ export class MemoryStore {
     };
     this.#titleMedia.set(key, media);
     return { ...media };
+  }
+
+  async listAnimexinReleases(limit = 12) {
+    return [...this.#releases.values()]
+      .sort((left, right) => String(right.publishedAt || '').localeCompare(String(left.publishedAt || '')))
+      .slice(0, Math.max(1, Math.min(Number(limit) || 12, 40)))
+      .map((release) => structuredClone(release));
+  }
+
+  async getAnimexinRelease(id) {
+    const release = this.#releases.get(String(id));
+    return release ? structuredClone(release) : null;
+  }
+
+  async saveAnimexinReleases(releases) {
+    let saved = 0;
+    for (const release of Array.isArray(releases) ? releases : []) {
+      const id = String(release?.id || '').trim();
+      if (!id) continue;
+      const existing = this.#releases.get(id);
+      // Admin-added downloads survive a refresh of the scraped release.
+      this.#releases.set(id, {
+        ...release,
+        id,
+        players: Array.isArray(release.players) ? release.players : [],
+        scrapedDownloads: Array.isArray(release.downloads)
+          ? release.downloads
+          : (Array.isArray(release.scrapedDownloads) ? release.scrapedDownloads : []),
+        addedDownloads: existing?.addedDownloads || [],
+        updatedAt: new Date(),
+      });
+      saved += 1;
+    }
+    if (this.#releases.size > 120) {
+      const keep = [...this.#releases.values()]
+        .sort((left, right) => String(right.publishedAt || '').localeCompare(String(left.publishedAt || '')))
+        .slice(0, 120);
+      this.#releases = new Map(keep.map((release) => [release.id, release]));
+    }
+    return saved;
+  }
+
+  async addAnimexinReleaseDownload(id, download) {
+    const release = this.#releases.get(String(id));
+    if (!release) return null;
+    const addedDownloads = Array.isArray(release.addedDownloads) ? release.addedDownloads : [];
+    if (addedDownloads.some((entry) => entry.url === download.url)) {
+      return { release: structuredClone(release), added: false };
+    }
+    release.addedDownloads = [...addedDownloads, download].slice(-10);
+    release.updatedAt = new Date();
+    return { release: structuredClone(release), added: true };
   }
 
   isHealthy() {

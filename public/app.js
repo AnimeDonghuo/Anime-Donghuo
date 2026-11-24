@@ -570,6 +570,24 @@ function renderHomeUpdates(items) {
   updates.slice(0, 3).forEach((title) => container.append(makeUpdateCard(title)));
 }
 
+async function renderHomeReleases() {
+  const container = document.getElementById('updatesList');
+  const link = document.getElementById('updatesSeeAll');
+  if (!container) return;
+  let releases = [];
+  try {
+    releases = await loadReleases();
+  } catch {
+    return;
+  }
+  if (!Array.isArray(releases) || !releases.length) return;
+  if (link) link.href = '/releases';
+  const heading = document.getElementById('updatesHeading');
+  if (heading) heading.textContent = '▶ \u00a0Latest Releases';
+  container.replaceChildren();
+  releases.slice(0, 3).forEach((release) => container.append(makeReleaseCard(release)));
+}
+
 function renderHomeCollections(items) {
   const sections = [
     { selector: '#trending .cards', key: 'trending' },
@@ -1461,6 +1479,219 @@ async function loadRoutedTitle(id) {
   return data.item;
 }
 
+function releasePlayerEntries(release) {
+  if (!Array.isArray(release?.players)) return [];
+  return release.players.flatMap((entry) => {
+    try {
+      const embed = new URL(entry?.embedUrl || '');
+      const watch = new URL(entry?.watchUrl || '');
+      const providerFor = (host) => {
+        if (host === 'dailymotion.com' || host.endsWith('.dailymotion.com') || host === 'dai.ly') return 'Dailymotion';
+        if (host === 'rumble.com' || host.endsWith('.rumble.com')) return 'Rumble';
+        return null;
+      };
+      const provider = providerFor(watch.hostname.toLowerCase());
+      if (embed.protocol !== 'https:' || watch.protocol !== 'https:' || !provider
+        || providerFor(embed.hostname.toLowerCase()) !== provider || embed.username || embed.password || embed.port
+        || watch.username || watch.password || watch.port) return [];
+      const label = typeof entry.label === 'string' && entry.label.trim() ? entry.label.trim() : provider;
+      // Belt and braces: the server only sends English-labelled servers, and the
+      // client refuses anything that says otherwise so no Indonesian mirror plays.
+      if (/\b(?:indonesia|indonesian|indo|malay|hindi|tagalog)\b/i.test(label)) return [];
+      return [{ provider, label, embedUrl: embed.href, watchUrl: watch.href }];
+    } catch {
+      return [];
+    }
+  }).slice(0, 6);
+}
+
+function appendReleasePlayers(container, release) {
+  const entries = releasePlayerEntries(release);
+  if (!entries.length) return 0;
+  const list = element('div', 'stream-player-list');
+  list.setAttribute('aria-label', `${release.title} English video players`);
+  entries.forEach((entry, index) => {
+    const card = element('article', 'stream-player-card');
+    const heading = entry.label && entry.label !== entry.provider
+      ? `${entry.provider} · ${entry.label}`
+      : `${entry.provider} player${entries.length > 1 ? ` ${index + 1}` : ''}`;
+    card.append(element('h3', 'stream-player-heading', heading));
+    const frame = document.createElement('iframe');
+    frame.src = entry.embedUrl;
+    frame.title = `${entry.provider} English player for ${release.title}`;
+    frame.loading = 'lazy';
+    frame.referrerPolicy = 'strict-origin-when-cross-origin';
+    frame.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen';
+    frame.allowFullscreen = true;
+    card.append(frame);
+    const external = element('a', 'stream-player-watch', `Open on ${entry.provider}`);
+    external.href = entry.watchUrl;
+    external.target = '_blank';
+    external.rel = 'noopener noreferrer';
+    card.append(external);
+    list.append(card);
+  });
+  container.append(list);
+  return entries.length;
+}
+
+function appendReleaseDownloads(container, release) {
+  const downloads = Array.isArray(release?.downloads) ? release.downloads : [];
+  if (!downloads.length) return 0;
+  const panel = element('div', 'release-downloads');
+  panel.append(element('h3', 'release-downloads-heading', 'Download'));
+  const list = element('div', 'release-download-list');
+  downloads.forEach((entry) => {
+    let url;
+    try {
+      url = new URL(entry?.url || '');
+    } catch {
+      return;
+    }
+    if (url.protocol !== 'https:' || !['mediafire.com', 'www.mediafire.com'].includes(url.hostname.toLowerCase())) return;
+    const link = element('a', 'dialog-button release-download-link', entry.label || 'MediaFire download');
+    link.href = url.href;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    list.append(link);
+  });
+  if (!list.childElementCount) return 0;
+  panel.append(list);
+  container.append(panel);
+  return list.childElementCount;
+}
+
+function releaseArtwork(release) {
+  if (typeof release?.thumbnailUrl !== 'string' || release.thumbnailUrl.length > 2048) return null;
+  try {
+    const url = new URL(release.thumbnailUrl);
+    if (url.protocol !== 'https:' || url.username || url.password || url.port) return null;
+    const host = url.hostname.toLowerCase();
+    const allowed = ['i.ibb.co', 'animexin.dev', 'animexin.vip', 'animexin.xyz', 'animexin.top', 'animexinax.com'];
+    const looksLikeAnimexin = allowed.some((entry) => host === entry || host.endsWith(`.${entry}`));
+    return looksLikeAnimexin ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function releaseEpisodeLabel(release) {
+  const parts = [release.series || release.title];
+  if (Number.isInteger(release.episode)) parts.push(`Episode ${release.episode}`);
+  return parts.filter(Boolean).join(' · ');
+}
+
+function makeReleaseCard(release) {
+  const card = element('article', 'release-card');
+  card.tabIndex = 0;
+  card.setAttribute('role', 'button');
+  card.setAttribute('aria-label', `Watch ${release.title}`);
+  const art = element('div', 'release-art');
+  const image = releaseArtwork(release);
+  if (image) {
+    const img = element('img', 'release-thumb');
+    img.src = image;
+    img.alt = '';
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    img.addEventListener('error', () => { img.remove(); art.classList.remove('has-artwork'); });
+    art.append(img);
+    art.classList.add('has-artwork');
+  }
+  if (!image) art.append(element('span', 'release-art-fallback', release.series || release.title));
+  const body = element('div', 'release-body');
+  body.append(element('strong', 'release-title', release.title));
+  const meta = element('div', 'release-meta');
+  if (Number.isInteger(release.episode)) meta.append(element('span', 'dialog-chip', `Episode ${release.episode}`));
+  if (release.playerCount) meta.append(element('span', 'dialog-chip', `${release.playerCount} English player${release.playerCount === 1 ? '' : 's'}`));
+  if (release.downloads?.length) meta.append(element('span', 'dialog-chip', `${release.downloads.length} download${release.downloads.length === 1 ? '' : 's'}`));
+  if (meta.childElementCount) body.append(meta);
+  if (!release.playerCount) body.append(element('small', 'release-note', 'No English Dailymotion or Rumble server yet.'));
+  card.append(art, body);
+  card.addEventListener('click', () => window.location.assign(`/release/${encodeURIComponent(release.id)}`));
+  card.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      window.location.assign(`/release/${encodeURIComponent(release.id)}`);
+    }
+  });
+  return card;
+}
+
+async function loadReleases() {
+  const data = await request('/api/releases?limit=12', { cache: 'no-store' });
+  return Array.isArray(data.items) ? data.items : [];
+}
+
+async function renderReleasesPage(page) {
+  pageHeader(page, 'Latest Releases', 'Newest Animexin episodes with English Dailymotion and Rumble players, plus owner-added MediaFire downloads.');
+  const container = element('div', 'release-grid');
+  container.append(element('p', 'dialog-loading', 'Loading the latest releases…'));
+  page.append(container);
+  try {
+    const releases = await loadReleases();
+    container.replaceChildren();
+    if (!releases.length) {
+      container.className = 'release-grid-empty';
+      container.textContent = 'No releases are cached yet. The site refreshes the Animexin list automatically; check back shortly.';
+      return;
+    }
+    releases.forEach((release) => container.append(makeReleaseCard(release)));
+  } catch (error) {
+    container.className = 'release-grid-empty';
+    container.textContent = error.message || 'The release list could not be loaded right now.';
+  }
+}
+
+async function renderReleasePage(page, id) {
+  pageHeader(page, 'Release', 'English Dailymotion and Rumble playback only. Anime Donghua does not host or proxy video.');
+  const shell = element('div', 'release-page');
+  page.append(shell);
+  let release = null;
+  try {
+    const data = await request(`/api/releases/${encodeURIComponent(id)}`, { cache: 'no-store' });
+    release = data.item;
+  } catch {
+    release = null;
+  }
+  if (!release) {
+    emptyPage(shell, 'That release is not available. Open the latest releases page to find a current episode.');
+    const back = element('a', 'route-link-button', 'Latest releases');
+    back.href = '/releases';
+    shell.append(back);
+    document.title = 'Release not found | Anime Donghua';
+    return;
+  }
+  const header = element('div', 'release-page-head');
+  const art = element('div', 'release-art release-page-art');
+  const image = releaseArtwork(release);
+  if (image) {
+    const img = element('img', 'release-thumb');
+    img.src = image;
+    img.alt = '';
+    img.decoding = 'async';
+    art.append(img);
+    art.classList.add('has-artwork');
+  }
+  header.append(art);
+  const copy = element('div', 'release-page-copy');
+  copy.append(element('h2', 'release-page-title', release.title));
+  copy.append(element('p', 'title-info-line', releaseEpisodeLabel(release)));
+  const players = appendReleasePlayers(copy, release);
+  if (!players) {
+    copy.append(element('p', 'dialog-note release-note', 'No English Dailymotion or Rumble server is published for this episode yet.'));
+  }
+  appendReleaseDownloads(copy, release);
+  header.append(copy);
+  shell.append(header);
+  const actions = element('div', 'dialog-actions');
+  const back = element('a', 'dialog-button primary', '← All latest releases');
+  back.href = '/releases';
+  actions.append(back);
+  shell.append(actions);
+  document.title = `${release.title} | Anime Donghua`;
+}
+
 async function renderCurrentPage() {
   const path = normalizedPath();
   const home = document.getElementById('home');
@@ -1532,6 +1763,18 @@ async function renderCurrentPage() {
   if (path === '/schedule') {
     renderSchedulePage(page);
     document.title = 'Release Schedule | Anime Donghua';
+    return;
+  }
+
+  if (path === '/releases') {
+    await renderReleasesPage(page);
+    document.title = 'Latest Releases | Anime Donghua';
+    return;
+  }
+
+  if (path.startsWith('/release/') || path.startsWith('/releases/')) {
+    const id = decodeURIComponent(path.slice(path.startsWith('/release/') ? '/release/'.length : '/releases/'.length));
+    await renderReleasePage(page, id);
     return;
   }
 
@@ -1613,6 +1856,7 @@ async function refreshCatalog() {
     renderHomeCollections(data.items);
     renderHomeUpdates(data.items);
     setFeaturedTitles(data.items);
+    if (normalizedPath() === '/') void renderHomeReleases();
     if (normalizedPath() !== '/') await renderCurrentPage();
   } catch {
     // Keep the last good catalogue visible when a refresh is temporarily unavailable.
@@ -1629,6 +1873,7 @@ async function initialize() {
       renderHomeCollections(data.items);
       renderHomeUpdates(data.items);
       setFeaturedTitles(data.items);
+      if (normalizedPath() === '/') void renderHomeReleases();
     })
     .catch(() => {});
   const csrfTask = csrfToken().catch(() => {});
@@ -1639,6 +1884,7 @@ async function initialize() {
   state.favorites = new Set(guestFavorites().filter((id) => state.catalog.has(id)));
   await syncGuestFavorites();
   await renderCurrentPage();
+  if (normalizedPath() === '/') void renderHomeReleases();
   window.setInterval(refreshCatalog, 60_000);
 }
 

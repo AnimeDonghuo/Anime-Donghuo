@@ -103,4 +103,8 @@ test('Telegram polling requires an admin allowlist and validates optional webhoo
   assert.equal(config.animexinEnabled, true);
   assert.equal(createConfig({ ...base, TELEGRAM_ADMIN_IDS: '123', ANIMEXIN_ENABLED: 'false' }).animexinEnabled, false);
   assert.throws(() => createConfig({ ...base, TELEGRAM_ADMIN_IDS: '123', ADMIN_LOGIN_CODE: 'short' }), /ADMIN_LOGIN_CODE/);
+  assert.equal(createConfig({ ...base, TELEGRAM_ADMIN_IDS: '123' }).animexinRefreshMinutes, 30);
+  assert.equal(createConfig({ ...base, TELEGRAM_ADMIN_IDS: '123', ANIMEXIN_REFRESH_MINUTES: '90' }).animexinRefreshMinutes, 90);
+  assert.throws(() => createConfig({ ...base, TELEGRAM_ADMIN_IDS: '123', ANIMEXIN_REFRESH_MINUTES: '2' }), /ANIMEXIN_REFRESH_MINUTES/);
+  assert.throws(() => createConfig({ ...base, TELEGRAM_ADMIN_IDS: '123', ANIMEXIN_REFRESH_MINUTES: 'soon' }), /ANIMEXIN_REFRESH_MINUTES/);
 });
