@@ -271,6 +271,26 @@ export function parseAnimexinServers(html, baseUrl) {
     servers.push({ name: cleanText(name, 80), url });
   }
 
+  // Servers are not always buttons with a data-src: many themes render them as a
+  // plain <a href> (sometimes with the provider name only, sometimes with the
+  // label in the text). Those were invisible to this parser, which is why a page
+  // could show Dailymotion only while Rumble sat right there in an anchor.
+  const anchorPattern = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
+  while ((match = anchorPattern.exec(markup))) {
+    const openingTag = `<a${match[1]}>`;
+    const href = attribute(openingTag, 'href');
+    if (!/^https?:\/\//i.test(href) && !href.startsWith('//')) continue;
+    // Only provider links count; a nav anchor is not a server.
+    if (!/(?:^|\/\/)(?:[a-z0-9-]+\.)?(?:dailymotion\.com|dai\.ly|rumble\.com)\//i.test(href)
+      && !/(?:^|\/\/)(?:[a-z0-9-]+\.)?(?:dailymotion\.com|dai\.ly|rumble\.com)$/i.test(href)) continue;
+    const name = attribute(openingTag, 'data-name')
+      || attribute(openingTag, 'data-server')
+      || attribute(openingTag, 'title')
+      || cleanText(match[2], 80);
+    if (!name) continue;
+    servers.push({ name: cleanText(name, 80), url: href });
+  }
+
   const optionPattern = /<option\b([^>]*)>([\s\S]*?)<\/option>/gi;
   while ((match = optionPattern.exec(markup))) {
     const openingTag = `<option${match[1]}>`;
@@ -368,11 +388,26 @@ export function parseAnimexinRelease(html, pageUrl) {
     if (!ENGLISH_LABEL.test(server.name) && !pageIsEnglish) continue;
     push(playerEntry(server.url, server.name, baseUrl));
   }
-  if (!servers.length) {
-    // A page without labelled servers cannot prove a language, so only the raw
-    // approved provider embeds are used and labelled by provider.
+  {
+    // Always look at the raw provider embeds too. A page can label one server in a
+    // button and carry the other as a bare iframe; only fetching raw URLs when the
+    // whole page had no labels is why Rumble went missing on mixed pages.
+    //
+    // The catch: a raw URL carries no label, so it carries no language. An
+    // unlabelled Dailymotion URL on a page whose Dailymotion buttons include an
+    // "Indonesia" one could be exactly that mirror, and it cannot be told apart.
+    // So a raw URL is accepted only for a provider the theme never labelled: that
+    // is the provider whose real servers were invisible to the button scan (the
+    // Rumble link this was meant to recover). Providers that do have labelled
+    // servers are already represented by those servers alone.
+    const labelledProviders = new Set(
+      servers.map((server) => playerEntry(server.url, '', baseUrl)?.provider).filter(Boolean)
+    );
     for (const url of rawEmbedUrls(html)) {
-      push(playerEntry(url, '', baseUrl));
+      const entry = playerEntry(url, '', baseUrl);
+      if (!entry) continue;
+      if (labelledProviders.has(entry.provider)) continue;
+      push(entry);
     }
   }
 
@@ -422,7 +457,7 @@ async function loadLatestReleases({ config, fetchImpl, limit }) {
   const pages = await Promise.all(selected.map(async (entry) => {
     try {
       const html = await fetchAnimexinText(entry.pageUrl, fetchImpl, 'text/html');
-      if (!html) return { ...entry, players: [], downloads: [], thumbnailUrl: null, episode: episodeFromTitle(entry.title), series: seriesFromTitle(entry.title) };
+      if (!html) return { ...entry, players: [], downloads: [], serverCount: 0, thumbnailUrl: null, episode: episodeFromTitle(entry.title), series: seriesFromTitle(entry.title) };
       const parsed = parseAnimexinRelease(html, entry.pageUrl);
       return {
         ...entry,
@@ -440,6 +475,7 @@ async function loadLatestReleases({ config, fetchImpl, limit }) {
         episode: episodeFromTitle(entry.title),
         thumbnailUrl: null,
         players: [],
+        serverCount: 0,
         downloads: [],
       };
     }
@@ -457,6 +493,9 @@ async function loadLatestReleases({ config, fetchImpl, limit }) {
       publishedAt: entry.publishedAt,
       players: entry.players,
       playerCount: entry.players.length,
+      // How many server buttons the page advertised, so a later report can say
+      // whether the page had no players or only non-English ones.
+      serverCount: entry.serverCount || entry.players.length,
       downloads: entry.downloads,
     }));
 
@@ -482,7 +521,7 @@ export function createAnimexinReleaseFeed({ config, fetchImpl = fetch } = {}) {
     if (!config.animexinEnabled) {
       return { enabled: false, source: null, fetchedAt: new Date().toISOString(), items: [], total: 0, playable: 0 };
     }
-    const cappedLimit = Math.max(1, Math.min(Number.isInteger(limit) ? limit : 6, 12));
+    const cappedLimit = Math.max(1, Math.min(Number.isInteger(limit) ? limit : 6, 24));
     const key = `${config.animexinBaseUrl}|${cappedLimit}`;
     const cached = cache.get(key);
     const now = Date.now();

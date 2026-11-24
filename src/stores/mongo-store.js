@@ -70,6 +70,7 @@ const animexinReleaseSchema = new mongoose.Schema({
   addedDownloads: { type: [releaseDownloadSchema], default: [] },
   // The Post ID of the catalog card this episode was mirrored into, so a later
   // refresh updates that card instead of publishing a second copy.
+  serverCount: { type: Number, default: null },
   publishedAdminId: { type: String, maxlength: 40 },
   publishedSlug: { type: String, maxlength: 140 },
 }, {
@@ -93,6 +94,7 @@ function asRelease(document) {
     thumbnailUrl: document.thumbnailUrl,
     publishedAt: document.publishedAt,
     players: document.players || [],
+    serverCount: Number.isInteger(document.serverCount) ? document.serverCount : null,
     scrapedDownloads: document.scrapedDownloads || [],
     addedDownloads: document.addedDownloads || [],
     publishedAdminId: document.publishedAdminId || null,
@@ -267,6 +269,7 @@ export class MongoStore {
             thumbnailUrl: release.thumbnailUrl || null,
             publishedAt: release.publishedAt || null,
             players: Array.isArray(release.players) ? release.players : [],
+            serverCount: Number.isInteger(release.serverCount) ? release.serverCount : null,
             scrapedDownloads: Array.isArray(release.downloads) ? release.downloads : [],
           },
           $setOnInsert: { addedDownloads: [] },

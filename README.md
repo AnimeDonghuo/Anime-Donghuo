@@ -89,6 +89,8 @@ New episodes are also mirrored into the publisher catalog automatically: each En
 
 Admins can review and extend the list from a private chat with the bot: `/releases` refreshes and prints the current release IDs with their English player counts, and `/releasedownload <release-id> <https://www.mediafire.com/file/...>` attaches an authorized MediaFire file you own or may distribute. Admin-added downloads survive later refreshes; scraped MediaFire links are shown only when the release page itself links them.
 
+Players are read from every form Animexin's theme uses — labelled `data-src` buttons, plain `<a href>` server links, and bare provider `<iframe>`s — so a page that labels its Dailymotion server and links Rumble in an anchor still yields both. A page whose Dailymotion buttons include an "Indonesia" one never has a bare Dailymotion URL promoted to English, because the raw URL carries no language of its own.
+
 Artwork comes from the release page's own featured image (including the Jetpack/WordPress CDN Animexin serves it from) and is re-hosted on ImgBB, so every post has a poster that stays up; when ImgBB is not configured the scraped URL is used as-is.
 
 Downloads on a post are the publisher's own: `/postdownload <SB-ID> <https://www.mediafire.com/file/...>` adds a MediaFire mirror, and the same command accepts a `t.me` link so you can point a post at your own Telegram delivery. The post page lists them under Downloads, and a card shows a Download chip. Uploaded files still deliver through the bot, and `.mp4` uploads added in the post are playable on the post page itself.

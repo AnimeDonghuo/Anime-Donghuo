@@ -4,7 +4,8 @@ import { canonicalContentUrl } from './server/services/telegram-bot.js';
 import { mergeStreamingEntries } from './server/services/streaming-service.js';
 import { resolveReleasePoster } from './animexin-posters.js';
 
-const SCAN_LIMIT = 12;
+// "Check all releases" has to mean the whole cached window, not just a page of it.
+const SCAN_LIMIT = 24;
 
 /**
  * Force a full Animexin pass and reconcile every episode with the website.
@@ -51,7 +52,14 @@ export async function checkAnimexin({ config, store, repository, bot = null, fet
     const players = (Array.isArray(release.players) ? release.players : [])
       .filter((player) => player?.embedUrl && ['Dailymotion', 'Rumble'].includes(player.provider));
     if (!players.length) {
-      unmatched.push({ release, reason: 'no English Dailymotion or Rumble server on the Animexin page' });
+      // Say what was actually on the page, so the reason is actionable instead of
+      // a guess: no servers found at all is a different problem from servers found
+      // but all of them non-English.
+      const serverCount = Number(release.serverCount) || 0;
+      const reason = serverCount > 0
+        ? `the page lists ${serverCount} server${serverCount === 1 ? '' : 's'} but none is an English Dailymotion or Rumble player`
+        : 'no Dailymotion or Rumble player was found on the Animexin page';
+      unmatched.push({ release, reason });
       continue;
     }
     playable += 1;
@@ -154,7 +162,7 @@ export async function checkAnimexin({ config, store, repository, bot = null, fet
   const publishable = unmatched.filter((entry) => entry.reason === 'needs a catalog card');
   let created = [];
   if (publishable.length) {
-    const result = await publishNewReleases({ store, repository, bot, config, limit: publishable.length });
+    const result = await publishNewReleases({ store, repository, bot, config, fetchImpl, limit: publishable.length });
     created = result.published || [];
     const createdIds = new Set(created.map((entry) => entry.releaseId));
     for (let index = unmatched.length - 1; index >= 0; index -= 1) {

@@ -208,3 +208,42 @@ test('artwork is read from the Jetpack CDN Animexin actually serves', () => {
   const release = parseAnimexinRelease(page, 'https://animexin.dev/swallowed-star-season-5-episode-191/');
   assert.equal(release.thumbnailUrl, 'https://i0.wp.com/animexin.dev/wp-content/uploads/2026/11/ss191.jpg?resize=750%2C400&ssl=1');
 });
+
+test('servers rendered as plain links are found, not only data-src buttons', () => {
+  const page = `<h1>Swallowed Star Season 5 Episode 191 English Sub</h1>
+  <div class="player-options">
+    <button class="player-option" data-src="https://www.dailymotion.com/video/x8e191" data-name="Hardsub English Dailymotion AX">A</button>
+    <a class="server-option" href="https://rumble.com/v6abc12-ss191.html">Rumble</a>
+  </div>
+  <nav><a href="https://animexin.dev/genres/">Genres</a></nav>`;
+  const release = parseAnimexinRelease(page, 'https://animexin.dev/swallowed-star-season-5-episode-191/');
+  assert.deepEqual(release.players.map((player) => player.provider), ['Dailymotion', 'Rumble']);
+  assert.equal(release.players[1].embedUrl, 'https://rumble.com/embed/v6abc12/');
+});
+
+test('a Rumble iframe beside a labelled Dailymotion button is kept', () => {
+  // The regression this guards: only fetching raw embeds when a page had *no*
+  // labels hid Rumble whenever Dailymotion was labelled.
+  const page = `<h1>Gu An Episode 12 English Sub</h1>
+  <button class="player-option" data-src="https://www.dailymotion.com/video/x8gu12" data-name="Hardsub English Dailymotion AX">A</button>
+  <iframe src="https://rumble.com/embed/v6gu12/"></iframe>`;
+  const release = parseAnimexinRelease(page, 'https://animexin.dev/gu-an-episode-12/');
+  assert.deepEqual(release.players.map((player) => player.provider).sort(), ['Dailymotion', 'Rumble']);
+});
+
+test('an unlabelled raw URL never reintroduces the Indonesian mirror', () => {
+  // Dailymotion has labelled servers on this page, one of them Indonesian, so a
+  // bare Dailymotion URL cannot be proven English and must be refused.
+  const page = `<h1>X Episode 191 English Sub</h1>
+  <div class="player-options">
+    <button class="player-option" data-src="https://www.dailymotion.com/video/x8e191" data-name="Hardsub English Dailymotion AX">A</button>
+    <button class="player-option" data-src="https://www.dailymotion.com/video/x8indo" data-name="Hardsub Indonesia Dailymotion AX">I</button>
+  </div>
+  <iframe src="https://www.dailymotion.com/embed/video/x8rawindo"></iframe>
+  <iframe src="https://rumble.com/embed/v6abc12/"></iframe>`;
+  const release = parseAnimexinRelease(page, 'https://animexin.dev/x-episode-191/');
+  assert.deepEqual(release.players.map((player) => player.provider), ['Dailymotion', 'Rumble']);
+  assert.equal(release.players[0].label, 'Hardsub English Dailymotion AX');
+  assert.ok(!release.players.some((player) => player.embedUrl.includes('x8indo')));
+  assert.ok(!release.players.some((player) => player.embedUrl.includes('x8rawindo')));
+});

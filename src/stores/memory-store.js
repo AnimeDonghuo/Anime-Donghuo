@@ -114,6 +114,7 @@ export class MemoryStore {
         publishedAdminId: existing?.publishedAdminId || release.publishedAdminId || null,
         publishedSlug: existing?.publishedSlug || release.publishedSlug || null,
         players: Array.isArray(release.players) ? release.players : [],
+        serverCount: Number.isInteger(release.serverCount) ? release.serverCount : (Array.isArray(release.players) ? release.players.length : 0),
         scrapedDownloads: Array.isArray(release.downloads)
           ? release.downloads
           : (Array.isArray(release.scrapedDownloads) ? release.scrapedDownloads : []),
