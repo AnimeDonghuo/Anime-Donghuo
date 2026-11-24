@@ -74,11 +74,11 @@ test('production configuration requires durable storage, TLS, and persistent sec
   });
   assert.equal(production.production, true);
   assert.equal(production.trustProxy, 1);
-  assert.equal(production.animexinEnabled, false);
+  assert.equal(production.animexinEnabled, true);
   assert.equal(production.sessionCookieName, '__Host-anime-donghua_session');
 });
 
-test('Telegram webhook configuration requires a secret and admin allowlist', () => {
+test('Telegram polling requires an admin allowlist and validates optional webhook secrets', () => {
   const base = {
     NODE_ENV: 'test',
     PORT: '8000',
@@ -87,15 +87,20 @@ test('Telegram webhook configuration requires a secret and admin allowlist', () 
     DATA_ENCRYPTION_KEY: Buffer.alloc(32, 17).toString('base64'),
     TELEGRAM_BOT_TOKEN: '123456:placeholder-token',
   };
-  assert.throws(() => createConfig(base), /TELEGRAM_WEBHOOK_SECRET/);
-  assert.throws(() => createConfig({ ...base, TELEGRAM_WEBHOOK_SECRET: 'a'.repeat(32) }), /TELEGRAM_ADMIN_IDS/);
-  assert.throws(() => createConfig({ ...base, TELEGRAM_WEBHOOK_SECRET: 'a'.repeat(32), TELEGRAM_ADMIN_IDS: '123,wrong' }), /numeric Telegram user IDs/);
+  assert.throws(() => createConfig(base), /TELEGRAM_ADMIN_IDS/);
+  assert.throws(() => createConfig({ ...base, TELEGRAM_ADMIN_IDS: '123,wrong' }), /numeric Telegram user IDs/);
+  assert.throws(() => createConfig({ ...base, TELEGRAM_ADMIN_IDS: '123', TELEGRAM_WEBHOOK_SECRET: 'too-short' }), /TELEGRAM_WEBHOOK_SECRET/);
 
   const config = createConfig({
     ...base,
-    TELEGRAM_WEBHOOK_SECRET: 'telegram-webhook-secret-long-enough-32-chars',
     TELEGRAM_ADMIN_IDS: '123,456,123',
+    TELEGRAM_WEBHOOK_SECRET: 'telegram-webhook-secret-long-enough-32-chars',
+    ADMIN_LOGIN_CODE: 'publisher-code-123',
   });
   assert.deepEqual(config.telegramAdminIds, ['123', '456']);
+  assert.equal(config.telegramPublisherLoginCode, 'publisher-code-123');
   assert.equal(config.posterSyncEnabled, false);
+  assert.equal(config.animexinEnabled, true);
+  assert.equal(createConfig({ ...base, TELEGRAM_ADMIN_IDS: '123', ANIMEXIN_ENABLED: 'false' }).animexinEnabled, false);
+  assert.throws(() => createConfig({ ...base, TELEGRAM_ADMIN_IDS: '123', ADMIN_LOGIN_CODE: 'short' }), /ADMIN_LOGIN_CODE/);
 });

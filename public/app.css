@@ -102,3 +102,6 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
 @media(max-width:350px){.bottom a{font-size:8px}.bottom a span{font-size:17px}.schedule-day{font-size:11px}.discovery-field{font-size:11px}}
 .player-page:not(.has-artwork){grid-template-columns:minmax(0,1fr)}
 .player-page:not(.has-artwork) .player-page-status{max-width:620px}
+
+/* Authorized Dailymotion and Rumble embeds are only rendered after server-side URL validation. */
+.stream-player-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:14px;width:100%;margin:14px 0}.stream-player-card{display:grid;align-content:start;gap:10px;min-width:0;padding:12px;border:1px solid #292d49;border-radius:15px;background:#0d1020}.stream-player-heading{margin:0;color:#eee8ff;font-size:14px}.stream-player-card iframe{display:block;width:100%;aspect-ratio:16/9;border:0;border-radius:10px;background:#050610}.stream-player-watch{justify-self:start;color:#cdb5ff;font-size:12px;font-weight:750;text-decoration:none}.stream-player-watch:hover{text-decoration:underline}.player-page .stream-player-list{position:relative;z-index:1}

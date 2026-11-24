@@ -58,6 +58,8 @@ test('health, readiness, and homepage are served safely', async () => {
   assert.match(homeHtml, /app\.css\?v=anime-donghua-v2/);
   assert.match(homeHtml, /app\.js\?v=anime-donghua-v2/);
   assert.match(homeResponse.headers.get('content-security-policy'), /img-src[^;]*https:\/\/i\.ibb\.co/);
+  assert.match(homeResponse.headers.get('content-security-policy'), /frame-src[^;]*https:\/\/.*dailymotion\.com/);
+  assert.match(homeResponse.headers.get('content-security-policy'), /frame-src[^;]*https:\/\/.*rumble\.com/);
   assert.equal(homeResponse.headers.get('cross-origin-resource-policy'), 'same-origin');
   assert.match(homeHtml, /<button class="avatar"[^>]*>AD<\/button>/);
   assert.match(homeHtml, /width:100vw!important;max-width:none!important/);
@@ -123,6 +125,21 @@ test('public catalogue titles retain safe artwork and verified metadata only', (
   assert.equal(overridden.imageUrl, 'https://i.ibb.co/abc/perfect-world.jpg');
   assert.equal(overridden.artworkSource, 'telegram');
   assert.equal(overridden.downloadUrl, 'https://www.mediafire.com/file/abc/perfect-world.zip');
+  const withPlayers = publicTitle(catalogItems[0], { players: [
+    { provider: 'Dailymotion', embedUrl: 'https://www.dailymotion.com/video/x123456', watchUrl: 'https://www.dailymotion.com/video/x123456' },
+    { provider: 'Rumble', embedUrl: 'https://rumble.com/vabcde-title.html', watchUrl: 'https://rumble.com/vabcde-title.html' },
+    { provider: 'Rumble', embedUrl: 'https://evil.example/embed/bad', watchUrl: 'https://evil.example/video/bad' },
+    { provider: 'Dailymotion', embedUrl: 'http://www.dailymotion.com/video/x000000', watchUrl: 'http://www.dailymotion.com/video/x000000' },
+  ] });
+  assert.equal(withPlayers.players.length, 2);
+  assert.equal(withPlayers.players[0].provider, 'Dailymotion');
+  assert.match(withPlayers.players[0].embedUrl, /^https:\/\/www\.dailymotion\.com\/embed\/video\/x123456\?/);
+  assert.deepEqual(withPlayers.players[1], {
+    provider: 'Rumble',
+    label: 'Rumble',
+    embedUrl: 'https://rumble.com/embed/vabcde/',
+    watchUrl: 'https://rumble.com/vabcde-title.html',
+  });
   assert.equal('downloadUrl' in publicTitle(catalogItems[0], { downloadUrl: 'https://example.org/file.zip' }), false);
   assert.equal('downloadUrl' in publicTitle(catalogItems[0], { downloadUrl: 'https://www.mediafire.com:444/file/abc/file.zip' }), false);
   assert.equal(mapped.addedAt, '2026-11-24T10:00:00.000Z');

@@ -316,6 +316,55 @@ function titleFromCard(card) {
   return name ? titleByName(name) : null;
 }
 
+function normalizedPlayerEntries(title) {
+  if (!Array.isArray(title?.players)) return [];
+  return title.players.flatMap((entry) => {
+    try {
+      const embed = new URL(entry?.embedUrl || '');
+      const watch = new URL(entry?.watchUrl || '');
+      const providerFor = (host) => {
+        if (host === 'dailymotion.com' || host.endsWith('.dailymotion.com') || host === 'dai.ly') return 'Dailymotion';
+        if (host === 'rumble.com' || host.endsWith('.rumble.com')) return 'Rumble';
+        return null;
+      };
+      const provider = providerFor(watch.hostname.toLowerCase());
+      if (embed.protocol !== 'https:' || watch.protocol !== 'https:' || !provider
+        || providerFor(embed.hostname.toLowerCase()) !== provider || embed.username || embed.password || embed.port
+        || watch.username || watch.password || watch.port) return [];
+      return [{ provider, embedUrl: embed.href, watchUrl: watch.href }];
+    } catch {
+      return [];
+    }
+  }).slice(0, 8);
+}
+
+function appendAuthorizedPlayers(container, title) {
+  const entries = normalizedPlayerEntries(title);
+  if (!entries.length) return 0;
+  const list = element('div', 'stream-player-list');
+  list.setAttribute('aria-label', `${title.title} authorized video players`);
+  entries.forEach((entry, index) => {
+    const card = element('article', 'stream-player-card');
+    card.append(element('h3', 'stream-player-heading', `${entry.provider} player${entries.length > 1 ? ` ${index + 1}` : ''}`));
+    const frame = document.createElement('iframe');
+    frame.src = entry.embedUrl;
+    frame.title = `${entry.provider} video player for ${title.title}`;
+    frame.loading = 'lazy';
+    frame.referrerPolicy = 'strict-origin-when-cross-origin';
+    frame.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen';
+    frame.allowFullscreen = true;
+    card.append(frame);
+    const external = element('a', 'stream-player-watch', `Open on ${entry.provider}`);
+    external.href = entry.watchUrl;
+    external.target = '_blank';
+    external.rel = 'noopener noreferrer';
+    card.append(external);
+    list.append(card);
+  });
+  container.append(list);
+  return entries.length;
+}
+
 function showTitleDetails(title) {
   const { content } = createDialog(title.title, '', title.type === 'donghua' ? 'DONGHUA' : 'ANIME');
   if (artworkUrl(title)) {
@@ -375,8 +424,13 @@ function showTitleDetails(title) {
   }
 
   const note = element('div', 'dialog-note');
-  note.append(element('strong', '', 'Playback is not configured. '));
-  note.append(document.createTextNode('Anime Donghua does not host or proxy video. A title can play only after an authorized streaming source is provided.'));
+  if (normalizedPlayerEntries(title).length) {
+    note.append(element('strong', '', 'Authorized player sources are available. '));
+    note.append(document.createTextNode('Open the playback view to use the Dailymotion or Rumble player. Anime Donghua does not host or proxy video.'));
+  } else {
+    note.append(element('strong', '', 'Playback is not configured. '));
+    note.append(document.createTextNode('Anime Donghua does not host or proxy video. A title can play only after an authorized streaming source is provided.'));
+  }
   content.append(note);
 
   const actions = element('div', 'dialog-actions');
@@ -390,15 +444,23 @@ function showTitleDetails(title) {
 }
 
 function showWatch(title) {
-  const { content } = createDialog(title.title, 'Playback unavailable', 'PLAYER');
-  const player = element('div', 'player-placeholder');
-  player.setAttribute('role', 'status');
-  player.append(element('div', 'player-symbol', '▶'));
-  player.append(element('p', 'player-message', 'No authorized video source is configured for this title.'));
-  content.append(player);
+  const { content } = createDialog(title.title, normalizedPlayerEntries(title).length ? 'Authorized playback' : 'Playback unavailable', 'PLAYER');
+  const playersAdded = appendAuthorizedPlayers(content, title);
+  if (!playersAdded) {
+    const player = element('div', 'player-placeholder');
+    player.setAttribute('role', 'status');
+    player.append(element('div', 'player-symbol', '▶'));
+    player.append(element('p', 'player-message', 'No authorized video source is configured for this title.'));
+    content.append(player);
+  }
   const note = element('div', 'dialog-note');
-  note.append(element('strong', '', 'No stream is being requested or embedded. '));
-  note.append(document.createTextNode('Anime Donghua does not host or proxy video. Playback can be enabled only when an authorized provider URL is supplied.'));
+  if (playersAdded) {
+    note.append(element('strong', '', 'Playback is provided by the authorized streaming host. '));
+    note.append(document.createTextNode('Anime Donghua does not host, download, or proxy video files.'));
+  } else {
+    note.append(element('strong', '', 'No stream is being requested or embedded. '));
+    note.append(document.createTextNode('Anime Donghua does not host or proxy video. Playback can be enabled only when an authorized provider URL is supplied.'));
+  }
   content.append(note);
   content.append(makeButton('← Back to title details', 'open-title', 'dialog-button', { id: title.id }));
   const playerPage = element('a', 'dialog-button', 'Open full player page');
@@ -1356,26 +1418,35 @@ function renderTitlePage(container, title) {
 function renderWatchPage(container, title) {
   pageHeader(container, title.title, 'Playback status');
   const player = element('section', 'player-page');
+  player.setAttribute('aria-label', `Playback for ${title.title}`);
   const hasArtwork = Boolean(artworkUrl(title));
-  player.classList.toggle('has-artwork', hasArtwork);
-  player.setAttribute('aria-label', `Playback availability for ${title.title}`);
-  if (hasArtwork) {
-    const poster = element('div', 'player-page-art');
-    appendArtwork(poster, title, 'player-page-image');
-    player.append(poster);
+  const count = appendAuthorizedPlayers(player, title);
+  if (!count) {
+    player.classList.toggle('has-artwork', hasArtwork);
+    player.setAttribute('aria-label', `Playback availability for ${title.title}`);
+    if (hasArtwork) {
+      const poster = element('div', 'player-page-art');
+      appendArtwork(poster, title, 'player-page-image');
+      player.append(poster);
+    }
+    const status = element('div', 'player-page-status');
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    status.append(element('div', 'player-symbol', '▶'));
+    status.append(element('h2', 'schedule-subhead', 'Playback unavailable'));
+    status.append(element('p', '', 'No authorized video source is configured for this title.'));
+    player.append(status);
   }
-  const status = element('div', 'player-page-status');
-  status.setAttribute('role', 'status');
-  status.setAttribute('aria-live', 'polite');
-  status.append(element('div', 'player-symbol', '▶'));
-  status.append(element('h2', 'schedule-subhead', 'Playback unavailable'));
-  status.append(element('p', '', 'No authorized video source is configured for this title.'));
-  player.append(status);
   container.append(player);
 
   const note = element('div', 'dialog-note player-page-note');
-  note.append(element('strong', '', 'This is not a playable stream. '));
-  note.append(document.createTextNode('Anime Donghua does not host or proxy video. Playback can be enabled only after an authorized provider source is supplied.'));
+  if (count) {
+    note.append(element('strong', '', `${count} authorized player${count === 1 ? '' : 's'} available. `));
+    note.append(document.createTextNode('Playback is delivered by Dailymotion or Rumble; Anime Donghua does not host or proxy video.'));
+  } else {
+    note.append(element('strong', '', 'This is not a playable stream. '));
+    note.append(document.createTextNode('Anime Donghua does not host or proxy video. Playback can be enabled only after an authorized provider source is supplied.'));
+  }
   container.append(note);
   const actions = element('div', 'dialog-actions');
   actions.append(makeButton('← Back to title details', 'navigate', 'dialog-button primary', { path: `/title/${encodeURIComponent(title.id)}` }));

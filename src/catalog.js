@@ -1,3 +1,5 @@
+import { dailymotionPlayerUrl, safeStreamingLink } from './server/services/streaming-service.js';
+
 const catalog = [
   {
     id: 'perfect-world', title: 'Perfect World', type: 'donghua', format: 'series', status: 'ongoing', imageUrl: '/assets/anime-donghua-blue-dragon.png',
@@ -141,12 +143,52 @@ export function safeMediaFireUrl(value) {
   }
 }
 
+function publicPlayerEntries(value) {
+  if (!Array.isArray(value)) return [];
+  const players = [];
+  const seen = new Set();
+  for (const entry of value) {
+    const supplied = typeof entry?.embedUrl === 'string' ? entry.embedUrl : entry?.watchUrl;
+    const safe = safeStreamingLink(supplied);
+    if (!safe?.embedUrl || !safe.watchUrl) continue;
+    let embed;
+    let watch;
+    try {
+      embed = new URL(safe.embedUrl);
+      watch = new URL(safe.watchUrl);
+    } catch {
+      continue;
+    }
+    const providerFor = (host) => {
+      if (host === 'dailymotion.com' || host.endsWith('.dailymotion.com') || host === 'dai.ly') return 'Dailymotion';
+      if (host === 'rumble.com' || host.endsWith('.rumble.com')) return 'Rumble';
+      return null;
+    };
+    const provider = providerFor(watch.hostname.toLowerCase());
+    if (!provider || providerFor(embed.hostname.toLowerCase()) !== provider
+      || embed.protocol !== 'https:' || watch.protocol !== 'https:'
+      || embed.username || embed.password || embed.port || watch.username || watch.password || watch.port) continue;
+    const embedUrl = dailymotionPlayerUrl(embed.toString());
+    if (seen.has(embedUrl)) continue;
+    seen.add(embedUrl);
+    players.push({
+      provider,
+      label: provider,
+      embedUrl,
+      watchUrl: watch.toString(),
+    });
+    if (players.length >= 8) break;
+  }
+  return players;
+}
+
 export function publicTitle(item, media = null) {
   const imageUrl = media?.imageUrl || item.imageUrl || item.artworkUrl || (typeof item.artwork === 'string' ? item.artwork : item.artwork?.url);
   const artworkSource = typeof media?.artworkSource === 'string' && /^[a-z-]{2,40}$/.test(media.artworkSource)
     ? media.artworkSource
     : undefined;
   const downloadUrl = safeMediaFireUrl(media?.downloadUrl || item.downloadUrl);
+  const players = publicPlayerEntries(media?.players);
   const addedAt = isoDate(item.addedAt || item.createdAt);
   const upcomingReleaseAt = isoDate(item.upcomingReleaseAt);
   const episodeReleaseAt = isoDate(item.latestEpisode?.releaseAt);
@@ -180,6 +222,7 @@ export function publicTitle(item, media = null) {
     ...(typeof imageUrl === 'string' && imageUrl.length <= 2048 ? { imageUrl } : {}),
     ...(artworkSource ? { artworkSource } : {}),
     ...(downloadUrl ? { downloadUrl } : {}),
+    ...(players.length ? { players } : {}),
     ...(addedAt ? { addedAt } : {}),
     ...(upcomingReleaseAt ? { upcomingReleaseAt } : {}),
     ...(Number.isInteger(item.year) && item.year >= 1900 && item.year <= 2100 ? { year: item.year } : {}),

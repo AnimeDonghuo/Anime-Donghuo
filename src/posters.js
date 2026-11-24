@@ -1,5 +1,6 @@
 import { catalogItems } from './catalog.js';
 import { uploadImageToImgBB } from './image-hosting.js';
+import { safeStreamingLink } from './server/services/streaming-service.js';
 
 const requestTimeoutMs = 7_000;
 const maxPosterBytes = 8 * 1024 * 1024;
@@ -233,7 +234,9 @@ function parseAnimexinPoster(html, item, config) {
     if (!headline || !matchesTitle(item, [stripHtml(headline)])) continue;
     const typeMatch = card.match(/<([a-z][a-z0-9]*)\b[^>]*class=["'][^"']*\b(?:typez|eggtype)\b[^"']*["'][^>]*>([\s\S]*?)<\/\1>/i);
     const listingType = typeMatch ? stripHtml(typeMatch[2]) : '';
-    if (!/\b(?:movies?|films?)\b/i.test(listingType)) continue;
+    const isMovie = /\b(?:movies?|films?)\b/i.test(listingType);
+    const isSeries = /\b(?:series|tv|donghua|anime|episodes?|ova|ona)\b/i.test(listingType);
+    if (item.format === 'movie' ? !isMovie : (!isSeries || isMovie)) continue;
     const images = card.match(/<img\b[^>]*>/gi) || [];
     const posterTag = images.find((image) => /\bitemprop\s*=\s*["']image["']/i.test(image)) || images[0];
     if (!posterTag) continue;
@@ -247,14 +250,11 @@ function parseAnimexinPoster(html, item, config) {
   return null;
 }
 
-async function searchAnimexin(item, config, fetchImpl) {
-  if (!config.animexinEnabled || item.type !== 'donghua' || item.format !== 'movie') return null;
-  const url = new URL('/', config.animexinBaseUrl);
-  url.searchParams.set('s', item.title);
+async function fetchAnimexinHtml(url, fetchImpl, userAgent = 'AnimeDonghuaMetadataBot/1.0') {
   const response = await fetchImpl(url, {
     headers: {
       Accept: 'text/html',
-      'User-Agent': 'AnimeDonghuaPosterBot/1.0 (+poster metadata only)',
+      'User-Agent': userAgent,
     },
     redirect: 'error',
     signal: AbortSignal.timeout(requestTimeoutMs),
@@ -265,15 +265,165 @@ async function searchAnimexin(item, config, fetchImpl) {
   const advertisedLength = Number(response.headers?.get('content-length') || 0);
   if (advertisedLength > 2_000_000) return null;
   const htmlBytes = await readLimitedBytes(response, 2_000_000);
-  if (!htmlBytes) return null;
-  const html = new TextDecoder().decode(htmlBytes);
+  return htmlBytes ? new TextDecoder().decode(htmlBytes) : null;
+}
+
+async function searchAnimexin(item, config, fetchImpl) {
+  if (!config.animexinEnabled || item.type !== 'donghua') return null;
+  const url = new URL('/', config.animexinBaseUrl);
+  url.searchParams.set('s', item.title);
+  const html = await fetchAnimexinHtml(url, fetchImpl, 'AnimeDonghuaPosterBot/1.0 (+poster metadata only)');
+  if (!html) return null;
   const imageUrl = parseAnimexinPoster(html, item, config);
   return imageUrl ? { imageUrl, source: 'animexin' } : null;
 }
 
+const ANIMEXIN_PAGE_HOSTS = ['animexin.dev', 'animexin.vip', 'animexin.xyz', 'animexin.top', 'animexinax.com'];
+
+function safeAnimexinPageUrl(value, baseUrl, config) {
+  let url;
+  try {
+    url = new URL(value, baseUrl);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' || url.username || url.password || url.port) return null;
+  const host = url.hostname.toLowerCase();
+  const configuredHost = new URL(config.animexinBaseUrl).hostname.toLowerCase();
+  const allowedHosts = [...ANIMEXIN_PAGE_HOSTS, configuredHost];
+  if (!allowedHosts.some((allowed) => host === allowed || host.endsWith(`.${allowed}`))) return null;
+  url.hash = '';
+  return url;
+}
+
+function animexinDetailUrl(html, item, searchUrl, config) {
+  for (const card of animexinCards(html)) {
+    const headings = card.match(/<h[1-6]\b[^>]*>[\s\S]*?<\/h[1-6]>/gi) || [];
+    const headline = headings.find((heading) => /\bitemprop\s*=\s*(?:["']headline["']|headline(?=\s|>))/i.test(heading));
+    if (!headline || !matchesTitle(item, [stripHtml(headline)])) continue;
+
+    const typeMatch = card.match(/<([a-z][a-z0-9]*)\b[^>]*class=["'][^"']*\b(?:typez|eggtype)\b[^"']*["'][^>]*>([\s\S]*?)<\/\1>/i);
+    const listingType = typeMatch ? stripHtml(typeMatch[2]) : '';
+    const isMovie = /\b(?:movies?|films?)\b/i.test(listingType);
+    const isSeries = /\b(?:series|tv|donghua|anime|episodes?|ova|ona)\b/i.test(listingType);
+    if (listingType && (item.format === 'movie' ? !isMovie : (isMovie || (isSeries === false && listingType)))) continue;
+
+    const anchors = card.match(/<a\b[^>]*>/gi) || [];
+    for (const anchor of anchors) {
+      const rawHref = attribute(anchor, 'href') || attribute(anchor, 'data-href');
+      const detailUrl = rawHref ? safeAnimexinPageUrl(rawHref, searchUrl, config) : null;
+      if (detailUrl && detailUrl.pathname !== '/') return detailUrl;
+    }
+  }
+  return null;
+}
+
+function playerUrlsFromAnimexin(html) {
+  const normalized = decodeHtml(String(html || ''))
+    .replace(/\\u003a/gi, ':')
+    .replace(/\\u002f/gi, '/')
+    .replace(/\\u0026/gi, '&')
+    .replace(/\\\//g, '/')
+    .replace(/%3a/gi, ':')
+    .replace(/%2f/gi, '/')
+    .replace(/%3f/gi, '?')
+    .replace(/%26/gi, '&')
+    .replace(/%3d/gi, '=');
+  const matches = normalized.match(/(?:https?:)?\/\/(?:[a-z0-9-]+\.)?(?:dailymotion\.com|dai\.ly|rumble\.com)(?::\d+)?\/[^\s"'<>]+/gi) || [];
+  return [...new Set(matches.map((value) => value.replace(/[),.;\]}]+$/g, '')).filter(Boolean))];
+}
+
+function streamingProviderFor(value) {
+  try {
+    const host = new URL(value).hostname.toLowerCase();
+    if (host === 'dailymotion.com' || host.endsWith('.dailymotion.com') || host === 'dai.ly') return 'Dailymotion';
+    if (host === 'rumble.com' || host.endsWith('.rumble.com')) return 'Rumble';
+  } catch {}
+  return null;
+}
+
+function animexinPageMatchesTitle(html, item) {
+  const candidates = [];
+  const headings = String(html || '').match(/<h[1-6]\b[^>]*>[\s\S]*?<\/h[1-6]>/gi) || [];
+  for (const heading of headings) {
+    const openingTag = heading.match(/^<h[1-6]\b[^>]*>/i)?.[0] || '';
+    if (/^<h1\b/i.test(openingTag) || /\bitemprop\s*=\s*["'](?:headline|name)["']/i.test(openingTag)) {
+      candidates.push(stripHtml(heading));
+    }
+  }
+  for (const tag of String(html || '').match(/<meta\b[^>]*>/gi) || []) {
+    const key = (attribute(tag, 'property') || attribute(tag, 'name') || attribute(tag, 'itemprop')).toLowerCase();
+    if (['og:title', 'twitter:title', 'headline', 'name'].includes(key)) candidates.push(attribute(tag, 'content'));
+  }
+  const titleTag = String(html || '').match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
+  if (titleTag) candidates.push(stripHtml(titleTag[1]));
+
+  for (const candidate of candidates) {
+    const variants = [candidate, ...candidate.split(/\s*(?:[|·–—])\s*|\s+-\s+/)];
+    for (const variant of variants) {
+      const clean = variant.trim().replace(/\s*\(\d{4}\)\s*$/, '').replace(/\s+\d{4}$/, '').trim();
+      if (matchesTitle(item, [variant, clean])) return true;
+    }
+  }
+  return false;
+}
+
+function normalizedAnimexinPlayers(html) {
+  const players = [];
+  const seen = new Set();
+  for (const raw of playerUrlsFromAnimexin(html)) {
+    const candidate = raw.startsWith('//') ? `https:${raw}` : raw;
+    let parsed;
+    try { parsed = new URL(candidate); } catch { continue; }
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.port) continue;
+    const provider = streamingProviderFor(parsed.toString());
+    if (!provider) continue;
+    const link = safeStreamingLink(parsed.toString(), { allowedHosts: ['dailymotion.com', 'dai.ly', 'rumble.com'] });
+    if (!link?.embedUrl || !link.watchUrl) continue;
+    const finalProvider = streamingProviderFor(link.embedUrl);
+    if (finalProvider !== provider || seen.has(link.embedUrl)) continue;
+    seen.add(link.embedUrl);
+    players.push({
+      provider,
+      label: provider,
+      embedUrl: link.embedUrl,
+      watchUrl: link.watchUrl,
+    });
+    if (players.length >= 8) break;
+  }
+  return players;
+}
+
+/**
+ * Find and import only Dailymotion/Rumble player links from an exact Animexin
+ * title result. Optional `pageUrl` is still constrained to an approved
+ * Animexin host; no third-party host is fetched by this scraper.
+ */
+export async function extractAnimexinPlayers(item, config, fetchImpl = fetch, { pageUrl = null } = {}) {
+  if (!config?.animexinEnabled || item?.type !== 'donghua' || !item?.title) {
+    return { sourceUrl: null, players: [] };
+  }
+
+  let detailUrl = pageUrl ? safeAnimexinPageUrl(pageUrl, config.animexinBaseUrl, config) : null;
+  if (pageUrl && !detailUrl) return { sourceUrl: null, players: [] };
+  if (!detailUrl) {
+    const searchUrl = new URL('/', config.animexinBaseUrl);
+    searchUrl.searchParams.set('s', item.title);
+    const searchHtml = await fetchAnimexinHtml(searchUrl, fetchImpl);
+    if (!searchHtml) return { sourceUrl: null, players: [] };
+    detailUrl = animexinDetailUrl(searchHtml, item, searchUrl, config);
+  }
+  if (!detailUrl) return { sourceUrl: null, players: [] };
+
+  const pageHtml = await fetchAnimexinHtml(detailUrl, fetchImpl);
+  if (!pageHtml) return { sourceUrl: detailUrl.href, players: [] };
+  if (pageUrl && !animexinPageMatchesTitle(pageHtml, item)) return { sourceUrl: detailUrl.href, players: [] };
+  return { sourceUrl: detailUrl.href, players: normalizedAnimexinPlayers(pageHtml) };
+}
+
 export async function findPosterSource(item, config, fetchImpl = fetch) {
   const providers = [];
-  if (item.type === 'donghua' && item.format === 'movie') providers.push(searchAnimexin);
+  if (item.type === 'donghua') providers.push(searchAnimexin);
   providers.push(searchMyAnimeList, searchAniList);
   if (item.type === 'anime' || item.format === 'movie') providers.push(searchTmdb);
 

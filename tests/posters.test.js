@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { findPosterSource, normalizeTitle, resolveAndCachePoster } from '../src/posters.js';
+import { extractAnimexinPlayers, findPosterSource, normalizeTitle, resolveAndCachePoster } from '../src/posters.js';
 
 const emptyConfig = {
   animexinEnabled: true,
@@ -88,6 +88,85 @@ test('Animexin scraper handles nested div-based movie cards and nested headline 
   assert.deepEqual(poster, { imageUrl: 'https://cdn.animexin.dev/poster.jpg', source: 'animexin' });
 });
 
+test('Animexin also supplies exact donghua series posters before catalogue APIs', async () => {
+  const html = '<article class="bs"><h2 itemprop="headline">Perfect World</h2>'
+    + '<div class="typez">TV Series</div><img itemprop="image" data-src="https://cdn.animexin.dev/perfect-world.jpg"></article>';
+  const fetchImpl = async () => new Response(html, { headers: { 'content-type': 'text/html' } });
+  const poster = await findPosterSource(
+    { id: 'perfect-world', title: 'Perfect World', type: 'donghua', format: 'series' },
+    emptyConfig,
+    fetchImpl,
+  );
+  assert.deepEqual(poster, { imageUrl: 'https://cdn.animexin.dev/perfect-world.jpg', source: 'animexin' });
+});
+
+test('Animexin imports only normalized Dailymotion and Rumble players from the exact title page', async () => {
+  const calls = [];
+  const searchHtml = '<article><a href="/perfect-world-season-1">'
+    + '<h2 itemprop="headline">Perfect World</h2><div class="typez">TV Series</div></a></article>';
+  const detailHtml = '<iframe src="https:\\/\\/www.dailymotion.com\\/video\\/x123456"></iframe>'
+    + '<iframe src="https://rumble.com/vabcde-test-title.html"></iframe>'
+    + '<iframe src="https://notdailymotion.com/video/x123456"></iframe>'
+    + '<iframe src="http://rumble.com/vabcde-test-title.html"></iframe>';
+  const fetchImpl = async (input) => {
+    const url = new URL(input);
+    calls.push(url.href);
+    if (url.searchParams.has('s')) return new Response(searchHtml, { headers: { 'content-type': 'text/html' } });
+    if (url.pathname === '/perfect-world-season-1') return new Response(detailHtml, { headers: { 'content-type': 'text/html' } });
+    throw new Error(`Unexpected Animexin request: ${url.href}`);
+  };
+  const result = await extractAnimexinPlayers(
+    { id: 'perfect-world', title: 'Perfect World', type: 'donghua', format: 'series', alternativeTitles: [] },
+    emptyConfig,
+    fetchImpl,
+  );
+  assert.equal(result.sourceUrl, 'https://animexin.dev/perfect-world-season-1');
+  assert.deepEqual(result.players, [
+    {
+      provider: 'Dailymotion',
+      label: 'Dailymotion',
+      embedUrl: 'https://www.dailymotion.com/embed/video/x123456',
+      watchUrl: 'https://www.dailymotion.com/video/x123456',
+    },
+    {
+      provider: 'Rumble',
+      label: 'Rumble',
+      embedUrl: 'https://rumble.com/embed/vabcde/',
+      watchUrl: 'https://rumble.com/vabcde-test-title.html',
+    },
+  ]);
+  assert.equal(calls.length, 2);
+});
+
+test('manual Animexin player pages must identify the same exact donghua title', async () => {
+  const item = { id: 'perfect-world', title: 'Perfect World', type: 'donghua', format: 'series' };
+  const pageUrl = 'https://animexin.dev/perfect-world';
+  const mismatch = await extractAnimexinPlayers(item, emptyConfig, async () => new Response(
+    '<h1>Another Donghua</h1><iframe src="https://www.dailymotion.com/video/x123456"></iframe>',
+    { headers: { 'content-type': 'text/html' } },
+  ), { pageUrl });
+  assert.equal(mismatch.sourceUrl, pageUrl);
+  assert.deepEqual(mismatch.players, []);
+
+  const matching = await extractAnimexinPlayers(item, emptyConfig, async () => new Response(
+    '<h1>Perfect World</h1><iframe src="https://www.dailymotion.com/video/x123456"></iframe>',
+    { headers: { 'content-type': 'text/html' } },
+  ), { pageUrl });
+  assert.deepEqual(matching.players.map((player) => player.provider), ['Dailymotion']);
+});
+
+test('Animexin player importer refuses a non-Animexin detail URL without fetching it', async () => {
+  let calls = 0;
+  const result = await extractAnimexinPlayers(
+    { title: 'Perfect World', type: 'donghua', format: 'series' },
+    emptyConfig,
+    async () => { calls += 1; throw new Error('must not fetch an untrusted host'); },
+    { pageUrl: 'https://evil.example/perfect-world' },
+  );
+  assert.deepEqual(result, { sourceUrl: null, players: [] });
+  assert.equal(calls, 0);
+});
+
 test('MyAnimeList is preferred over AniList when it returns an exact match', async () => {
   const calls = [];
   const fetchImpl = async (input) => {
@@ -133,7 +212,7 @@ test('AniList is the secondary catalogue source and TMDB is excluded for donghua
     fetchImpl,
   );
   assert.equal(poster?.source, 'anilist');
-  assert.deepEqual(calls, ['api.myanimelist.net', 'graphql.anilist.co']);
+  assert.deepEqual(calls, ['animexin.dev', 'api.myanimelist.net', 'graphql.anilist.co']);
 });
 
 test('TMDB is the final fallback for donghua movies', async () => {

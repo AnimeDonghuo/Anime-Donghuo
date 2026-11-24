@@ -16,6 +16,13 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.models.AnimeDonghuaUser || mongoose.model('AnimeDonghuaUser', userSchema);
 
+const playerSchema = new mongoose.Schema({
+  provider: { type: String, enum: ['Dailymotion', 'Rumble'], required: true, maxlength: 24 },
+  label: { type: String, maxlength: 80 },
+  embedUrl: { type: String, required: true, maxlength: 2048 },
+  watchUrl: { type: String, required: true, maxlength: 2048 },
+}, { _id: false, strict: 'throw' });
+
 const titleMediaSchema = new mongoose.Schema({
   titleId: { type: String, required: true, unique: true, immutable: true, maxlength: 100 },
   imageUrl: { type: String, maxlength: 2048 },
@@ -24,6 +31,9 @@ const titleMediaSchema = new mongoose.Schema({
   artworkCheckedAt: { type: Date },
   downloadUrl: { type: String, maxlength: 2048 },
   downloadUpdatedAt: { type: Date },
+  players: { type: [playerSchema], default: undefined },
+  playerSource: { type: String, maxlength: 40 },
+  playerUpdatedAt: { type: Date },
 }, {
   timestamps: true,
   versionKey: false,
@@ -138,12 +148,15 @@ export class MongoStore {
       artworkCheckedAt: document.artworkCheckedAt,
       downloadUrl: document.downloadUrl,
       downloadUpdatedAt: document.downloadUpdatedAt,
+      players: document.players,
+      playerSource: document.playerSource,
+      playerUpdatedAt: document.playerUpdatedAt,
       updatedAt: document.updatedAt,
     }]));
   }
 
   async setTitleMedia(titleId, fields) {
-    const allowed = ['imageUrl', 'artworkSource', 'artworkUpdatedAt', 'artworkCheckedAt', 'downloadUrl', 'downloadUpdatedAt'];
+    const allowed = ['imageUrl', 'artworkSource', 'artworkUpdatedAt', 'artworkCheckedAt', 'downloadUrl', 'downloadUpdatedAt', 'players', 'playerSource', 'playerUpdatedAt'];
     const set = Object.fromEntries(allowed
       .filter((key) => Object.hasOwn(fields, key) && fields[key] !== undefined)
       .map((key) => [key, fields[key]]));
@@ -161,6 +174,9 @@ export class MongoStore {
       artworkCheckedAt: document.artworkCheckedAt,
       downloadUrl: document.downloadUrl,
       downloadUpdatedAt: document.downloadUpdatedAt,
+      players: document.players,
+      playerSource: document.playerSource,
+      playerUpdatedAt: document.playerUpdatedAt,
       updatedAt: document.updatedAt,
     };
   }

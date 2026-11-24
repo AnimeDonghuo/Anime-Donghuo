@@ -172,7 +172,11 @@ export function createApp({ store, config, fetchImpl = fetch }) {
         fontSrc: ["'self'", 'data:'],
         formAction: ["'self'"],
         frameAncestors: config.production ? ["'none'"] : ["'self'", 'https:'],
-        frameSrc: ["'none'"],
+        frameSrc: [
+          "'self'",
+          'https://dailymotion.com', 'https://*.dailymotion.com', 'https://dai.ly',
+          'https://rumble.com', 'https://*.rumble.com',
+        ],
         imgSrc: [
           "'self'", 'data:',
           'https://i.ibb.co',

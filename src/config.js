@@ -42,15 +42,22 @@ export function createConfig(env = process.env) {
   if (telegramAdminIds.length > 50 || telegramAdminIds.some((id) => !/^\d{1,20}$/.test(id))) {
     throw new Error('TELEGRAM_ADMIN_IDS must be a comma-separated list of up to 50 numeric Telegram user IDs.');
   }
-  if (telegramBotToken && (!telegramWebhookSecret || !/^[A-Za-z0-9_-]{32,256}$/.test(telegramWebhookSecret) || telegramAdminIds.length === 0)) {
-    throw new Error('TELEGRAM_BOT_TOKEN requires a 32+ character TELEGRAM_WEBHOOK_SECRET and at least one TELEGRAM_ADMIN_IDS value.');
+  if (telegramWebhookSecret && !/^[A-Za-z0-9_-]{32,256}$/.test(telegramWebhookSecret)) {
+    throw new Error('TELEGRAM_WEBHOOK_SECRET must contain 32–256 URL-safe characters.');
+  }
+  if (telegramBotToken && telegramAdminIds.length === 0) {
+    throw new Error('TELEGRAM_BOT_TOKEN requires at least one TELEGRAM_ADMIN_IDS value.');
+  }
+  const telegramPublisherLoginCode = env.ADMIN_LOGIN_CODE?.trim() || null;
+  if (telegramPublisherLoginCode && (Buffer.byteLength(telegramPublisherLoginCode, 'utf8') < 8 || Buffer.byteLength(telegramPublisherLoginCode, 'utf8') > 128)) {
+    throw new Error('ADMIN_LOGIN_CODE must contain between 8 and 128 bytes.');
   }
 
   const malClientId = env.MAL_CLIENT_ID?.trim() || null;
   const tmdbApiKey = env.TMDB_API_KEY?.trim() || null;
   const tmdbReadAccessToken = env.TMDB_READ_ACCESS_TOKEN?.trim() || null;
   const imgbbApiKey = env.IMGBB_API_KEY?.trim() || null;
-  const animexinEnabled = env.ANIMEXIN_ENABLED === 'true';
+  const animexinEnabled = env.ANIMEXIN_ENABLED !== 'false';
   const animexinBaseUrlValue = env.ANIMEXIN_BASE_URL?.trim() || 'https://animexin.dev';
   let animexinBaseUrl;
   try {
@@ -131,6 +138,7 @@ export function createConfig(env = process.env) {
     telegramBotToken,
     telegramWebhookSecret,
     telegramAdminIds: Object.freeze(telegramAdminIds),
+    telegramPublisherLoginCode,
     imgbbApiKey,
     malClientId,
     tmdbApiKey,

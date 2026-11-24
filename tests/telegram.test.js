@@ -3,6 +3,7 @@ import test from 'node:test';
 import { createApp } from '../src/app.js';
 import { createConfig } from '../src/config.js';
 import { MemoryStore } from '../src/stores/memory-store.js';
+import { createTelegramWebhookHandler } from '../src/telegram-bot.js';
 
 const secret = 'test-telegram-webhook-secret-1234567890';
 const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01]);
@@ -20,6 +21,20 @@ async function waitForTitleMedia(store, titleId, predicate = () => true) {
   }
   throw new Error(`Timed out waiting for media update: ${titleId}`);
 }
+
+test('legacy webhook refuses empty-secret updates when no webhook secret is configured', async () => {
+  const store = new MemoryStore();
+  const handler = createTelegramWebhookHandler({ config: { telegramBotToken: 'configured-token', telegramWebhookSecret: null }, store });
+  let status = null;
+  await handler({
+    get: () => '',
+    body: { update_id: 1 },
+  }, {
+    sendStatus(value) { status = value; return this; },
+  });
+  assert.equal(status, 403);
+  await store.close();
+});
 
 test('Telegram admins can upload existing-title posters and save owner-provided MediaFire links', async () => {
   const config = createConfig({
