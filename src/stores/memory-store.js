@@ -128,6 +128,16 @@ export class MemoryStore {
     return saved;
   }
 
+  async markAnimexinReleasePublished(id, { adminId, slug } = {}) {
+    const release = this.#releases.get(String(id));
+    if (!release) return null;
+    release.publishedAdminId = adminId || release.publishedAdminId || null;
+    release.publishedSlug = slug || release.publishedSlug || null;
+    release.publishedAt = release.publishedAt || null;
+    release.updatedAt = new Date();
+    return structuredClone(release);
+  }
+
   async addAnimexinReleaseDownload(id, download) {
     const release = this.#releases.get(String(id));
     if (!release) return null;

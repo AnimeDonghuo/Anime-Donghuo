@@ -1,19 +1,23 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { PUBLISHER_COMMANDS } from '../src/server/services/telegram-bot.js';
+import { PUBLISHER_COMMANDS, postIdAnswerText } from '../src/server/services/telegram-bot.js';
 import { MemoryCatalogRepository } from '../src/server/catalog.repository.js';
 import { createPublisherConfig, createPublisherRepository } from '../src/server/telegram-integration.js';
 import { createConfig } from '../src/config.js';
 import { registerAppTelegramCommands } from '../src/telegram-bot.js';
 import { MemoryStore } from '../src/stores/memory-store.js';
 
+// This site publishes anime and donghua only, so its command scope lists two
+// draft shelves plus the anime-movie shelf. The extra upstream shelves are still
+// answered (with guidance) but are deliberately kept out of the menu.
 const requiredPublisherCommands = [
-  'request', 'login', 'help', 'panel', 'movie', 'anime', 'cartoon', 'donghua', 'kdrama', 'series', 'tv', 'adultdb',
+  'request', 'login', 'help', 'panel', 'movie', 'anime', 'donghua',
   'batch', 'batch1', 'cateloguefix', 'repair', 'sync', 'auto', 'title', 'titlebatch', 'lang', 'lan', 'lam',
   'subtitles', 'subs', 'year', 'genres', 'description', 'poster', 'p', 'imgdd', 'scrape', 'category', 'release',
   'done', 'status', 'teststorage', 'cancel', 'delete', 'removefile', 'merge', 'posts', 'postid', 'searchm', 'search',
   'stats', 'cmd', 'players', 'playerapi', 'backup', 'recover', 'addchannel', 'channels', 'removechannel', 'requests', 'catalogposter',
   'imgapis', 'addimgapi', 'removeimgapi', 'maintanence', 'restart', 'logout', 'download', 'animexinplayers',
+  'releases', 'releasedownload',
 ];
 
 function makeConfig(extra = {}) {
@@ -229,4 +233,43 @@ test('Animexin player imports into published donghua posts while preserving exis
   assert.match(replies[0], /2 authorized Animexin players/);
   await repository.close();
   await store.close();
+});
+
+test('the site origin prefers a custom domain over the platform host', () => {
+  const koyebOnly = makeConfig({ KOYEB_PUBLIC_DOMAIN: 'previous-alleen-hshdhhdh-95ed6732.koyeb.app' });
+  assert.equal(koyebOnly.siteUrl, 'https://previous-alleen-hshdhhdh-95ed6732.koyeb.app');
+
+  const withDomain = makeConfig({
+    KOYEB_PUBLIC_DOMAIN: 'previous-alleen-hshdhhdh-95ed6732.koyeb.app',
+    PUBLIC_SITE_URL: 'https://app.animedonghua.nx.kg/',
+  });
+  assert.equal(withDomain.siteUrl, 'https://app.animedonghua.nx.kg');
+
+  const viaOrigin = makeConfig({
+    KOYEB_PUBLIC_DOMAIN: 'placeholder-abc.koyeb.app',
+    PUBLIC_ORIGIN: 'https://app.animedonghua.nx.kg',
+  });
+  assert.equal(viaOrigin.siteUrl, 'https://app.animedonghua.nx.kg');
+
+  // The publisher config the bot reads must print the same domain.
+  const publisherConfig = createPublisherConfig(withDomain, {
+    NODE_ENV: 'test',
+    MONGODB_URI: 'mongodb+srv://user:pass@cluster.example/anime_donghua?retryWrites=true',
+    PUBLIC_SITE_URL: 'https://app.animedonghua.nx.kg/',
+    KOYEB_PUBLIC_DOMAIN: 'previous-alleen-hshdhhdh-95ed6732.koyeb.app',
+  });
+  assert.equal(publisherConfig.siteUrl, 'https://app.animedonghua.nx.kg');
+});
+
+test('a card link on the site domain resolves to its post id', () => {
+  const card = {
+    adminId: 'SB-3B00158B29',
+    slug: 'swallowed-star-season-4',
+    title: 'Swallowed Star Season 4',
+    category: 'donghua',
+    filesCount: 5,
+  };
+  const config = makeConfig({ PUBLIC_SITE_URL: 'https://app.animedonghua.nx.kg' });
+  const text = postIdAnswerText(card, config);
+  assert.match(text, /Catalog page: https:\/\/app\.animedonghua\.nx\.kg\/donghua\/swallowed-star-season-4/);
 });

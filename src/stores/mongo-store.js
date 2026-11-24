@@ -68,6 +68,10 @@ const animexinReleaseSchema = new mongoose.Schema({
   players: { type: [releasePlayerSchema], default: [] },
   scrapedDownloads: { type: [releaseDownloadSchema], default: [] },
   addedDownloads: { type: [releaseDownloadSchema], default: [] },
+  // The Post ID of the catalog card this episode was mirrored into, so a later
+  // refresh updates that card instead of publishing a second copy.
+  publishedAdminId: { type: String, maxlength: 40 },
+  publishedSlug: { type: String, maxlength: 140 },
 }, {
   timestamps: true,
   versionKey: false,
@@ -91,6 +95,8 @@ function asRelease(document) {
     players: document.players || [],
     scrapedDownloads: document.scrapedDownloads || [],
     addedDownloads: document.addedDownloads || [],
+    publishedAdminId: document.publishedAdminId || null,
+    publishedSlug: document.publishedSlug || null,
     updatedAt: document.updatedAt,
   };
 }
@@ -270,6 +276,15 @@ export class MongoStore {
       saved += 1;
     }
     return saved;
+  }
+
+  async markAnimexinReleasePublished(id, { adminId, slug } = {}) {
+    const document = await AnimexinRelease.findOneAndUpdate(
+      { releaseId: String(id) },
+      { $set: { publishedAdminId: adminId || null, publishedSlug: slug || null } },
+      { new: true, runValidators: true },
+    ).lean();
+    return asRelease(document);
   }
 
   async addAnimexinReleaseDownload(id, download) {

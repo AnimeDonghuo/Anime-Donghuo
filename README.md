@@ -68,9 +68,24 @@ The playback-status view reports unavailable playback until an admin adds a supp
 
 Poster lookup uses exact normalized title matches only. Donghua movies and series try Animexin first, then MyAnimeList and AniList; TMDB remains limited to anime series/movies and donghua movies. Other anime titles try MyAnimeList, AniList, then TMDB. Animexin poster lookup reads title and artwork metadata only. Separately, the admin-only `/animexinplayers <catalog ID, title, or SB-ID> [Animexin page URL]` command checks an exact donghua result and extracts only Dailymotion and Rumble player URLs; it never downloads video bytes or follows the player links server-side. Those approved embeds appear on a static catalogue title’s playback view. `ANIMEXIN_BASE_URL` defaults to `https://animexin.dev` and can be overridden if the site moves. Animexin is enabled by default because permission has been confirmed; set `ANIMEXIN_ENABLED=false` to disable both Animexin poster lookup and player extraction. If poster files use another public CDN, list its hostname in `ANIMEXIN_IMAGE_HOSTS`. No live Animexin request is made when the source is disabled.
 
+### Public domain, published posts, and the shelves this site shows
+
+Set `PUBLIC_SITE_URL` (or `PUBLIC_ORIGIN`) to the **custom domain**, e.g. `https://app.animedonghua.nx.kg`. Koyeb keeps its auto-assigned `*.koyeb.app` value in the environment after a domain is attached, so a custom domain always wins when links are built — announcements, `/postid`, and publish confirmations all print the domain visitors actually use. Leaving only `KOYEB_PUBLIC_DOMAIN` set still works; it is simply the fallback.
+
+Posts created through the Telegram publisher are part of the website, not a separate catalogue. The app opens the publisher catalog at startup and serves those cards through:
+
+- `/<category>/<slug>` (the link the bot prints), `/title/<slug>`, `/watch/<slug>`
+- `/api/catalog` (list) and `/api/catalog/<slug>` (detail)
+
+A slug that does not exist (deleted or unpublished post, or a shelf this site does not show) answers with a readable "that post is not available" page instead of a bare 404. Discovery and playback still render from the same public title shape, so approved Dailymotion/Rumble players attached with `/animexinplayers` or `/cmd` appear on `/watch/<slug>`.
+
+Only **anime and donghua** are published here (series or movie). The bot's draft panel and command menu expose `/anime`, `/donghua`, and `/movie`; the upstream shelves (cartoon, K-Drama, web series, TV/OTT, 18+) reply with guidance instead of creating a draft the site could never display, and `/category` accepts only anime, donghua, and movie.
+
 ### Latest releases with English playback
 
 The site keeps a rolling list of the newest Animexin episodes at `/releases` (and on the home page). A background refresh reads the Animexin RSS feed at `ANIMEXIN_BASE_URL/feed/` on startup and every `ANIMEXIN_REFRESH_MINUTES` (default 30, range 5–1440), falls back to the Animexin home page when the feed is empty, then reads each release page. Only servers whose label is English **and** whose provider is Dailymotion or Rumble become playable: Indonesian, Ok.ru, Odysee, Dtube, Mega, Dood, and every other mirror are discarded at scrape time and again when the public JSON is serialized. Each release embeds at most six approved players plus any MediaFire downloads, and the app never downloads, hosts, or proxies the video bytes. `/api/releases` and `/api/releases/:id` expose only that public shape — never the scrape page URL or raw server list — and the HTML routes `/releases` and `/release/:id` render natively. Cached releases live in the `AnimeDonghuaAnimexinRelease` MongoDB collection when `MONGODB_URI` is set, otherwise in memory for the life of the process.
+
+New episodes are also mirrored into the publisher catalog automatically: each English release becomes one donghua card with a real `SB-…` Post ID, a site page at `/<category>/<slug>`, and (when `/addchannel` channels exist) a channel announcement. The card keeps updating in place on later refreshes instead of creating a second copy, and a release with no English Dailymotion/Rumble server is never published. `ANIMEXIN_REFRESH_MINUTES` controls the cadence.
 
 Admins can review and extend the list from a private chat with the bot: `/releases` refreshes and prints the current release IDs with their English player counts, and `/releasedownload <release-id> <https://www.mediafire.com/file/...>` attaches an authorized MediaFire file you own or may distribute. Admin-added downloads survive later refreshes; scraped MediaFire links are shown only when the release page itself links them.
 

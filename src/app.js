@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { catalogById, catalogItems, publicTitle } from './catalog.js';
 import { createAnimexinReleaseFeed } from './animexin-feed.js';
 import { publicRelease, refreshAnimexinReleases } from './releases.js';
+import { toPublicContent } from './server/index.js';
 import { createTelegramWebhookHandler } from './telegram-bot.js';
 import {
   constantTimeStringEqual,
@@ -156,11 +157,88 @@ function parsePositiveInteger(value, fallback, maximum) {
   return parsed;
 }
 
-export function createApp({ store, config, fetchImpl = fetch, releaseFeed = null }) {
+/** Map a publisher catalog record onto the public title shape this site renders. */
+function publishedTitleContent(content, config) {
+  const category = String(content?.category || '').toLowerCase();
+  if (!content?.slug || !content?.title) return null;
+  // Only the shelves this site publishes are exposed publicly.
+  const type = category === 'donghua' ? 'donghua' : ['anime', 'cartoon', 'movie'].includes(category) ? 'anime' : null;
+  if (!type) return null;
+  return { ...toPublicContent(content, config || {}, { includeFileChoices: true }), type };
+}
+
+/** Public serialization of one publisher catalog record, or null when it is not public. */
+function publicPublishedItem(content, config) {
+  const item = publishedTitleContent(content, config);
+  if (!item) return null;
+  const players = Array.isArray(item.stream?.entries)
+    ? item.stream.entries
+      .filter((entry) => entry?.embedUrl && ['Dailymotion', 'Rumble'].includes(entry.provider))
+      .slice(0, 8)
+      .map((entry) => ({
+        provider: entry.provider,
+        label: entry.label || entry.provider,
+        embedUrl: entry.embedUrl,
+        watchUrl: entry.watchUrl || entry.embedUrl,
+      }))
+    : [];
+  return {
+    id: item.slug,
+    title: item.title,
+    type: item.type,
+    // The publisher shelf decides the format: a movie card stays a movie even
+    // when it carries one episode record.
+    format: item.category === 'movie' || item.episodeCount <= 1 ? 'movie' : 'series',
+    status: 'ongoing',
+    genres: Array.isArray(item.genres) ? item.genres : [],
+    sections: [],
+    description: item.description,
+    ...(item.posterUrl ? { imageUrl: item.posterUrl } : {}),
+    ...(players.length ? { players } : {}),
+    ...(item.languages?.length ? { languages: item.languages } : {}),
+    ...(item.subtitleLanguages?.length ? { subtitles: item.subtitleLanguages } : {}),
+    ...(item.year ? { year: item.year } : {}),
+    ...(item.episodeCount > 0 ? { episodeCount: item.episodeCount } : {}),
+    ...(item.publishedAt ? { addedAt: item.publishedAt } : {}),
+    ...(item.telegramUrl ? { telegramUrl: item.telegramUrl } : {}),
+    publisherAdminId: content.adminId || null,
+    source: 'publisher',
+  };
+}
+
+export function createApp({ store, config, fetchImpl = fetch, releaseFeed = null, catalogRepository = null }) {
   if (!store || !config) throw new Error('createApp requires a store and configuration.');
 
   const animexinHost = new URL(config.animexinBaseUrl).hostname;
   const feed = releaseFeed || createAnimexinReleaseFeed({ config, fetchImpl });
+  const publisher = catalogRepository;
+
+  /**
+   * Published posts created through the Telegram publisher live in the publisher
+   * catalog, not in src/catalog.js. They are read here so /donghua/<slug> and the
+   * public API resolve the same card the bot linked to instead of returning 404.
+   */
+  async function publisherContentBySlug(slug) {
+    if (!publisher || typeof publisher.findContentBySlug !== 'function') return null;
+    try {
+      return await publisher.findContentBySlug(String(slug || '').trim());
+    } catch {
+      return null;
+    }
+  }
+
+  async function publisherContentList({ type, format } = {}) {
+    if (!publisher || typeof publisher.listContent !== 'function') return [];
+    try {
+      const rows = await publisher.listContent({ limit: 100, hideAdult: true });
+      return rows
+        .map((row) => publicPublishedItem(row, config))
+        .filter(Boolean)
+        .filter((item) => (!type || item.type === type) && (!format || item.format === format));
+    } catch {
+      return [];
+    }
+  }
   const app = express();
   app.disable('x-powered-by');
   if (config.trustProxy) app.set('trust proxy', config.trustProxy);
@@ -306,6 +384,8 @@ export function createApp({ store, config, fetchImpl = fetch, releaseFeed = null
     }
 
     let filtered = catalogItems.filter((item) => {
+      // Only anime and donghua exist on this site, as series or movies.
+      if (!['anime', 'donghua'].includes(item.type)) return false;
       const searchable = `${item.title} ${(item.alternativeTitles || []).join(' ')} ${item.description} ${item.genres.join(' ')}`.toLowerCase();
       return (!query || searchable.includes(query))
         && (!type || item.type === type)
@@ -332,10 +412,23 @@ export function createApp({ store, config, fetchImpl = fetch, releaseFeed = null
     }
     const pageItems = filtered.slice(offset, offset + limit);
     const mediaById = await store.getTitleMedia(pageItems.map((item) => item.id));
+    const staticItems = pageItems.map((item) => publicTitle(item, mediaById.get(item.id)));
+    // Published Telegram posts share the same catalogue. They always belong to
+    // trending/updates/donghua/anime discovery, so a section filter other than
+    // featured still includes them.
+    const published = offset === 0 && (!section || section !== 'featured')
+      ? (await publisherContentList({ type, format }))
+        .filter((entry) => !status || entry.status === status)
+        .filter((entry) => !query || `${entry.title} ${entry.description}`.toLowerCase().includes(query))
+        .filter((entry) => !genre || entry.genres.some((value) => value.toLowerCase() === genre))
+        .filter((entry) => !year || entry.year === year)
+        .slice(0, Math.max(0, limit - staticItems.length))
+      : [];
+    const items = [...staticItems, ...published];
     response.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
     return response.json({
-      items: pageItems.map((item) => publicTitle(item, mediaById.get(item.id))),
-      total: filtered.length,
+      items,
+      total: filtered.length + published.length,
       offset,
       limit,
     });
@@ -343,10 +436,19 @@ export function createApp({ store, config, fetchImpl = fetch, releaseFeed = null
 
   app.get('/api/catalog/:id', async (request, response) => {
     const item = catalogById.get(request.params.id);
-    if (!item) return response.status(404).json({ error: 'Title not found.' });
-    const mediaById = await store.getTitleMedia([item.id]);
-    response.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
-    return response.json({ item: publicTitle(item, mediaById.get(item.id)) });
+    if (item) {
+      const mediaById = await store.getTitleMedia([item.id]);
+      response.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
+      return response.json({ item: publicTitle(item, mediaById.get(item.id)) });
+    }
+    // A published Telegram post is addressable by its slug.
+    const published = await publisherContentBySlug(request.params.id);
+    const publishedItem = published && published.published !== false ? publicPublishedItem(published, config) : null;
+    if (publishedItem) {
+      response.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
+      return response.json({ item: publishedItem });
+    }
+    return response.status(404).json({ error: 'Title not found.' });
   });
 
   app.post('/api/auth/register', authLimiter, requireJsonBody, async (request, response) => {
@@ -524,11 +626,41 @@ export function createApp({ store, config, fetchImpl = fetch, releaseFeed = null
   app.get(['/trending', '/updates', '/releases', '/donghua', '/anime', '/ongoing', '/movies', '/categories', '/continue-watching', '/my-list', '/profile', '/discover', '/schedule'], (_request, response) => {
     response.set('Cache-Control', 'no-cache').sendFile(`${publicDirectory}/index.html`);
   });
-  app.get(['/release/:id', '/releases/:id'], (_request, response) => {
+  app.get('/releases/:id', (_request, response) => {
     response.set('Cache-Control', 'no-cache').sendFile(`${publicDirectory}/index.html`);
   });
-  app.get(['/title/:id', '/watch/:id'], (request, response, next) => {
-    if (!catalogById.has(request.params.id)) return next();
+  app.get(['/release/:id'], (_request, response) => {
+    response.set('Cache-Control', 'no-cache').sendFile(`${publicDirectory}/index.html`);
+  });
+  app.get(['/title/:id', '/watch/:id'], async (request, response, next) => {
+    if (catalogById.has(request.params.id)) {
+      return response.set('Cache-Control', 'no-cache').sendFile(`${publicDirectory}/index.html`);
+    }
+    const published = await publisherContentBySlug(request.params.id);
+    if (!published || published.published === false) return next();
+    return response.set('Cache-Control', 'no-cache').sendFile(`${publicDirectory}/index.html`);
+  });
+  // The publisher bot links to /<category>/<slug> (e.g. /donghua/swallowed-star-season-4).
+  // Those cards live in the publisher catalog, so the route must serve the app shell
+  // and let the client resolve the slug instead of 404ing on a live post.
+  app.get('/:category/:slug', async (request, response, next) => {
+    const category = String(request.params.category || '').toLowerCase();
+    if (!['anime', 'donghua', 'movie', 'cartoon'].includes(category)) return next();
+    if (!/^[a-z0-9][a-z0-9-]{0,119}$/i.test(request.params.slug || '')) return next();
+    const published = await publisherContentBySlug(request.params.slug);
+    if (!published || published.published === false) {
+      // Give a clear answer instead of a bare 404 when the post simply is not
+      // published yet (or was deleted after the bot shared the link).
+      return response.status(404).set('Cache-Control', 'no-store').type('html').send(
+        '<!doctype html><meta charset="utf-8"><title>Post not available | Anime Donghua</title>'
+        + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        + '<body style="font-family:system-ui;background:#0d1020;color:#eee8ff;padding:32px">'
+        + '<h1 style="font-size:22px">That post is not available</h1>'
+        + `<p style="color:#a7a8c2">No published catalog post matches <code>${request.params.slug.replace(/[<>&"]/g, '')}</code>.</p>`
+        + '<p><a style="color:#cdb5ff" href="/">Browse the catalogue</a> · '
+        + '<a style="color:#cdb5ff" href="/releases">Latest releases</a></p></body>',
+      );
+    }
     return response.set('Cache-Control', 'no-cache').sendFile(`${publicDirectory}/index.html`);
   });
   app.get('/genre/:slug', (request, response, next) => {
@@ -551,7 +683,7 @@ export function createApp({ store, config, fetchImpl = fetch, releaseFeed = null
     const databaseError = error?.name?.startsWith('Mongo') || error?.name === 'MongooseError';
 
     if (error && !tooLarge && !malformedJson && !duplicate && !passwordBusy) {
-      console.error('Request failed:', error.name || 'Error');
+      console.error('Request failed:', error?.name || 'Error');
     }
 
     if (duplicate) return response.status(409).json({ error: 'Unable to complete this request.' });

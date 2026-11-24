@@ -91,19 +91,37 @@ function normalizeSiteUrl(value) {
 function resolveSiteUrl(env) {
   // PUBLIC_SITE_URL is required for announcement buttons to open the catalog
   // page first instead of sending visitors straight to the Telegram deep link.
-  for (const candidate of [
+  //
+  // A custom domain must win over Koyeb's auto-assigned *.koyeb.app host, which
+  // is still present in the environment after a domain is attached. Otherwise
+  // every announcement and /postid answer advertises the throwaway host.
+  const candidates = [
     env.PUBLIC_SITE_URL,
     env.WEBSITE_URL,
     env.SITE_URL,
     env.APP_URL,
     env.PUBLIC_URL,
     env.VITE_PUBLIC_SITE_URL,
+    env.PUBLIC_ORIGIN,
+    env.PUBLIC_DOMAIN,
+    env.CUSTOM_DOMAIN,
+    env.SITE_DOMAIN,
+    env.PUBLIC_HOSTNAME,
     env.KOYEB_PUBLIC_DOMAIN
-  ]) {
-    const url = normalizeSiteUrl(candidate);
-    if (url) return url;
+  ];
+  const resolved = candidates.map((candidate) => normalizeSiteUrl(candidate)).filter(Boolean);
+  const custom = resolved.find((url) => !isKoyebAssignedHost(url));
+  return custom || resolved[0] || '';
+}
+
+/** Koyeb's own service host, which is replaced once a custom domain is attached. */
+export function isKoyebAssignedHost(value) {
+  try {
+    const host = new URL(/^https?:\/\//i.test(String(value)) ? String(value) : `https://${value}`).hostname.toLowerCase();
+    return host === 'koyeb.app' || host.endsWith('.koyeb.app');
+  } catch {
+    return false;
   }
-  return '';
 }
 
 export function normalizePlayerOrigin(value) {

@@ -1,5 +1,5 @@
 import { createCatalogRepository, MemoryCatalogRepository } from './catalog.repository.js';
-import { loadConfig as loadPublisherConfig } from './config.js';
+import { isKoyebAssignedHost, loadConfig as loadPublisherConfig } from './config.js';
 
 function databaseNameFromUri(uri) {
   if (!uri) return null;
@@ -23,6 +23,14 @@ export function createPublisherConfig(appConfig, env = process.env) {
     // Mongoose uses the MongoDB driver's `test` database when the URI has no path.
     || 'test';
   const config = loadPublisherConfig({ ...env, MONGODB_DB: database });
+
+  // The site's own public origin wins over an auto-assigned platform host, so a
+  // link the bot prints points at the domain the visitor actually uses.
+  if (appConfig.publicOrigin && !isKoyebAssignedHost(appConfig.publicOrigin)) {
+    config.siteUrl = appConfig.publicOrigin;
+  } else if (appConfig.siteUrl && !isKoyebAssignedHost(appConfig.siteUrl)) {
+    config.siteUrl = appConfig.siteUrl;
+  }
 
   config.environment = appConfig.nodeEnv;
   config.port = appConfig.port;

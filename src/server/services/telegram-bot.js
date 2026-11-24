@@ -31,7 +31,19 @@ import { extractStreamingUrl, inferStreamManifestFormat, oneClickDownloadHost, m
 import { normalizePlayerApiBaseUrl, normalizePlayerApiQuality, normalizePlayerApiSettings } from './player-api-service.js';
 import { parseScrapeArguments, scrapeMetadataFromUrl } from './scraper-service.js';
 
-const PUBLISH_CATEGORIES = ['anime', 'cartoon', 'donghua', 'kdrama', 'movie', 'web-series', 'tv', 'adult'];
+// This site publishes anime and donghua only (series and movies). The upstream
+// publisher supports more shelves, but exposing them here produced cards the
+// website could never show — so the drafts a visitor can be sent to are the two
+// shelves that exist on the site.
+const PUBLISH_CATEGORIES = ['anime', 'donghua'];
+/** Every category a stored card may carry, including ones a card keeps from before. */
+const STORED_PUBLISH_CATEGORIES = ['anime', 'cartoon', 'donghua', 'kdrama', 'movie', 'web-series', 'tv', 'adult'];
+const SITE_CATEGORY_LABELS = new Map([
+  ['anime', 'Anime'],
+  ['donghua', 'Donghua'],
+  ['cartoon', 'Anime'],
+  ['movie', 'Anime movie'],
+]);
 const ADULT_CATEGORY = 'adult';
 const BATCH_PROGRESS_INTERVAL = 25;
 const BATCH_MAX_FORWARD_RETRIES = 8;
@@ -182,19 +194,10 @@ export function synchronizeDeliveryBotUsername(config, botInfo) {
 function panelKeyboard() {
   return Markup.inlineKeyboard([
     [
-      Markup.button.callback('✦ Anime', 'new:anime'),
-      Markup.button.callback('☻ Cartoon', 'new:cartoon'),
-      Markup.button.callback('◇ Donghua', 'new:donghua')
+      Markup.button.callback('✦ Anime series', 'new:anime'),
+      Markup.button.callback('◇ Donghua series', 'new:donghua')
     ],
-    [
-      Markup.button.callback('♡ K-Drama', 'new:kdrama'),
-      Markup.button.callback('▶ Movie', 'new:movie'),
-      Markup.button.callback('▣ Web series', 'new:web-series')
-    ],
-    // The broadcast/OTT shelf is its own row because it is the one publishers keep adding to:
-    // a TV or streaming-original show that is not anime, donghua, or K-Drama.
-    [Markup.button.callback('▤ TV & OTT', 'new:tv')],
-    [Markup.button.callback('🔞 18+ private', 'new:adult')],
+    [Markup.button.callback('▶ Anime movie', 'new:movie')],
     [Markup.button.callback('Draft status', 'draft:status'), Markup.button.callback('Discard draft', 'draft:cancel')]
   ]);
 }
@@ -228,14 +231,9 @@ const VISITOR_COMMANDS = [
 export const PUBLISHER_COMMANDS = [
   ...VISITOR_COMMANDS,
   { command: 'panel', description: 'Open the publisher panel' },
-  { command: 'movie', description: 'New movie draft' },
+  { command: 'movie', description: 'New anime movie draft' },
   { command: 'anime', description: 'New anime draft' },
-  { command: 'cartoon', description: 'New cartoon draft' },
   { command: 'donghua', description: 'New donghua draft' },
-  { command: 'kdrama', description: 'New K-Drama draft' },
-  { command: 'series', description: 'New web series draft' },
-  { command: 'tv', description: 'New TV & OTT draft (/ott also works)' },
-  { command: 'adultdb', description: 'New private 18+ draft (/18db also works)' },
   { command: 'batch', description: 'Import a private storage range' },
   { command: 'batch1', description: 'Import a storage link/range into ONE single catalog post (1 poster only)' },
   { command: 'cateloguefix', description: 'Recheck & fix post names or auto-merge same-name posts in a range (e.g. 1 to 50)' },
@@ -1201,12 +1199,33 @@ export function postIdAnswerText(content, config = null) {
 /** Routes the app owns; anything else under the site root is a catalog card. */
 const NOT_A_CARD_ROUTE = new Set(['', 'browse', 'search', 'request', 'requests', 'new', 'help', 'top', 'calendar', 'genres', 'delivery', 'api', 'watch']);
 
+const SITE_CARD_ROUTES = new Set(['anime', 'donghua', 'cartoon', 'movie']);
+
 function catalogSlugFromUrl(url) {
   const segments = String(url.pathname || '').split('/').filter(Boolean);
   if (!segments.length || segments.length > 2) return null;
   const slug = segments.at(-1).replace(/\.html?$/i, '');
-  if (!slug || NOT_A_CARD_ROUTE.has(segments[0]) || (segments.length === 2 && !CATEGORY_IDS.has(segments[0]))) return null;
+  if (!slug) return null;
+  // A bare <host>/<slug> link and the site's /<category>/<slug> card route both
+  // name a card. Only the site's own shelves are accepted as a category prefix.
+  if (segments.length === 1) return NOT_A_CARD_ROUTE.has(segments[0]) ? null : slug;
+  if (!SITE_CARD_ROUTES.has(segments[0]) && !CATEGORY_IDS.has(segments[0])) return null;
   return slug;
+}
+
+function isSiteHost(value, config = null) {
+  try {
+    const host = new URL(/^https?:\/\//i.test(String(value)) ? String(value) : `https://${value}`).hostname.toLowerCase();
+    if (host === 'koyeb.app' || host.endsWith('.koyeb.app')) return true;
+    if (config?.siteUrl) {
+      try {
+        if (host === new URL(config.siteUrl).hostname.toLowerCase()) return true;
+      } catch {}
+    }
+    return Boolean(config?.siteHosts?.includes?.(host));
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -9408,18 +9427,27 @@ export async function launchTelegramBot({ config, repository, subsPlease = null,
     });
   }
 
-  // The letter-first /adultdb name is listed in Telegram's command menu, while
-  // /18db is the short publisher alias requested for the isolated category.
-  bot.command('18db', async (ctx) => {
-    if (!(await requirePublisher(ctx, repository, config))) return;
-    await beginDraft(ctx, ADULT_CATEGORY, parseCommandArgument(ctx.message.text), repository, config);
-  });
-
-  // Publishers of this shelf call it OTT as often as TV, so both words open the same draft.
-  bot.command('ott', async (ctx) => {
-    if (!(await requirePublisher(ctx, repository, config))) return;
-    await beginDraft(ctx, 'tv', parseCommandArgument(ctx.message.text), repository, config);
-  });
+  // Shelves this site does not publish are answered, not silently ignored: a
+  // publisher who types one from muscle memory is told which two shelves exist
+  // instead of getting a draft the website can never show.
+  const unavailableShelves = {
+    cartoon: 'Cartoon',
+    kdrama: 'K-Drama',
+    series: 'Web series',
+    tv: 'TV & OTT',
+    ott: 'TV & OTT',
+    adultdb: '18+',
+    '18db': '18+',
+  };
+  for (const [command, label] of Object.entries(unavailableShelves)) {
+    bot.command(command, async (ctx) => {
+      if (!(await requirePublisher(ctx, repository, config))) return;
+      await ctx.reply(
+        `This site publishes anime and donghua only, so ${label} drafts are turned off.\n\n`
+        + 'Use /anime, /donghua, or /movie (anime movie). Restore an existing card’s shelf with /category <Post ID> anime|donghua|movie.'
+      );
+    });
+  }
 
   bot.command('batch', async (ctx) => {
     if (!(await requirePublisher(ctx, repository, config))) return;
@@ -9720,7 +9748,7 @@ export async function launchTelegramBot({ config, repository, subsPlease = null,
       ? ADULT_CATEGORY
       : resolveCategoryId(rawCategory);
     if (!target || !category || !PUBLISH_CATEGORIES.includes(category)) {
-      await ctx.reply('Usage: /category SB-0123ABCDEF anime\nSeveral posts at once: /category SB-0123ABCDEF, SB-1122334455 anime\nCategories: anime, cartoon, donghua, kdrama, movie, web-series, tv (also accepted: ott), adult');
+      await ctx.reply('Usage: /category SB-0123ABCDEF anime\nSeveral posts at once: /category SB-0123ABCDEF, SB-1122334455 donghua\nThis site publishes anime, donghua, and anime movies (movie) only. Existing cartoon, kdrama, web-series, tv, and adult cards stay private until moved to one of those.');
       return;
     }
     // The 18+ storage boundary is decided per post: one restricted card in a

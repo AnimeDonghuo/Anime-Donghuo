@@ -130,10 +130,33 @@ export function createConfig(env = process.env) {
     }
   }
 
+  // The public site origin used for links the bot prints. A custom domain must
+  // beat Koyeb's auto-assigned *.koyeb.app host that stays in the environment
+  // after a domain is attached.
+  const siteUrlCandidates = [
+    env.PUBLIC_SITE_URL, env.WEBSITE_URL, env.SITE_URL, env.APP_URL,
+    env.PUBLIC_URL, env.PUBLIC_ORIGIN, env.CUSTOM_DOMAIN, env.PUBLIC_DOMAIN,
+    env.KOYEB_PUBLIC_DOMAIN,
+  ].map((value) => {
+    const candidate = String(value || '').trim().replace(/\/+$/, '');
+    if (!candidate) return '';
+    return /^https?:\/\//i.test(candidate) ? candidate : `https://${candidate}`;
+  }).filter(Boolean);
+  const isKoyebHost = (value) => {
+    try {
+      const host = new URL(value).hostname.toLowerCase();
+      return host === 'koyeb.app' || host.endsWith('.koyeb.app');
+    } catch {
+      return false;
+    }
+  };
+  const siteUrl = siteUrlCandidates.find((value) => !isKoyebHost(value)) || siteUrlCandidates[0] || null;
+
   return Object.freeze({
     nodeEnv,
     production,
     port,
+    siteUrl,
     mongodbUri: env.MONGODB_URI || null,
     sessionSecret,
     emailLookupSecret,

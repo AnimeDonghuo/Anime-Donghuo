@@ -1415,8 +1415,14 @@ function renderTitlePage(container, title) {
   }
 
   const note = element('div', 'dialog-note');
-  note.append(element('strong', '', 'Playback is not configured. '));
-  note.append(document.createTextNode('No authorized stream is attached to this title. Anime Donghua does not host or proxy video.'));
+  const playerCount = normalizedPlayerEntries(title).length;
+  if (playerCount) {
+    note.append(element('strong', '', `${playerCount} authorized player${playerCount === 1 ? '' : 's'} available. `));
+    note.append(document.createTextNode('Playback is delivered by Dailymotion or Rumble; Anime Donghua does not host or proxy video.'));
+  } else {
+    note.append(element('strong', '', 'Playback is not configured. '));
+    note.append(document.createTextNode('No authorized stream is attached to this title. Anime Donghua does not host or proxy video.'));
+  }
   copy.append(note);
   const actions = element('div', 'dialog-actions');
   if (title.downloadUrl) {
@@ -1692,6 +1698,33 @@ async function renderReleasePage(page, id) {
   document.title = `${release.title} | Anime Donghua`;
 }
 
+async function renderPublishedCard(page, slug) {
+  let title = state.catalog.get(slug);
+  if (!title) {
+    try {
+      const data = await request(`/api/catalog/${encodeURIComponent(slug)}`, { cache: 'no-store' });
+      title = data.item;
+      state.catalog.set(title.id, title);
+    } catch {
+      title = null;
+    }
+  }
+  if (!title) {
+    pageHeader(page, 'Post not available', 'This catalog post is not published on the website.');
+    emptyPage(page, 'The Telegram bot may have shared a link for a post that was deleted, unpublished, or belongs to a category this site does not show. Ask for a fresh link from /posts.');
+    const back = element('a', 'route-link-button', 'Browse the catalogue');
+    back.href = '/';
+    page.append(back);
+    document.title = 'Post not available | Anime Donghua';
+    return;
+  }
+  renderTitlePage(page, title);
+  const watch = element('a', 'route-link-button', '▶ Watch on this website');
+  watch.href = `/watch/${encodeURIComponent(title.id)}`;
+  page.append(watch);
+  document.title = `${title.title} | Anime Donghua`;
+}
+
 async function renderCurrentPage() {
   const path = normalizedPath();
   const home = document.getElementById('home');
@@ -1795,6 +1828,14 @@ async function renderCurrentPage() {
     pageHeader(page, 'Continue Watching', 'Saved playback progress will appear here only after an authorized source is connected.');
     emptyPage(page, 'No saved playback progress is available. Playback sources are not configured, so Anime Donghua has not recorded progress.');
     document.title = 'Continue Watching | Anime Donghua';
+    return;
+  }
+
+  // Publisher posts: the bot links to /<category>/<slug>. Resolve that slug through
+  // the catalogue API, which now includes published Telegram posts.
+  const categoryCardMatch = path.match(/^\/(anime|donghua|movie|cartoon)\/([A-Za-z0-9][A-Za-z0-9-]{0,119})$/);
+  if (categoryCardMatch) {
+    await renderPublishedCard(page, categoryCardMatch[2]);
     return;
   }
 

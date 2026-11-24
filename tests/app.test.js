@@ -339,3 +339,75 @@ test('latest Animexin releases are served as English-only public players', async
     await releaseStore.close();
   }
 });
+
+test('published Telegram posts resolve on the site instead of 404', async () => {
+  const publishedStore = new MemoryStore();
+  const publishedAt = '2026-11-24T10:00:00.000Z';
+  const record = {
+    adminId: 'SB-3B00158B29',
+    slug: 'swallowed-star-season-4',
+    title: 'Swallowed Star Season 4',
+    category: 'donghua',
+    description: 'A donghua release published through the bot.',
+    genres: ['Action'],
+    languages: ['Chinese'],
+    year: 2020,
+    filesCount: 5,
+    episodeCount: 5,
+    published: true,
+    publishedAt,
+    shareCode: 'sharecode01',
+    hasDelivery: false,
+    files: [],
+    stream: {
+      entries: [{
+        provider: 'Dailymotion',
+        label: 'Hardsub English Dailymotion AX',
+        embedUrl: 'https://www.dailymotion.com/embed/video/x8english',
+        watchUrl: 'https://www.dailymotion.com/video/x8english',
+      }],
+    },
+  };
+  const repository = {
+    findContentBySlug: async (slug) => (slug === record.slug ? record : null),
+    listContent: async () => [record, { ...record, slug: 'a-kdrama', title: 'A K-Drama', category: 'kdrama' }],
+  };
+  const publishedApp = createApp({ store: publishedStore, config, catalogRepository: repository });
+  const publishedServer = publishedApp.listen(0, '127.0.0.1');
+  await new Promise((resolve, reject) => {
+    publishedServer.once('listening', resolve);
+    publishedServer.once('error', reject);
+  });
+  const publishedBase = `http://127.0.0.1:${publishedServer.address().port}`;
+  try {
+    // The bot's link is /<category>/<slug>; it must serve the app shell, not a 404.
+    const page = await fetch(`${publishedBase}/donghua/swallowed-star-season-4`);
+    assert.equal(page.status, 200);
+    assert.match(await page.text(), /id="routeMain"/);
+
+    const detail = await fetch(`${publishedBase}/api/catalog/swallowed-star-season-4`);
+    assert.equal(detail.status, 200);
+    const item = (await detail.json()).item;
+    assert.equal(item.title, 'Swallowed Star Season 4');
+    assert.equal(item.type, 'donghua');
+    assert.equal(item.players.length, 1);
+    assert.equal(item.players[0].provider, 'Dailymotion');
+
+    // A title route and a bare slug both resolve too.
+    assert.equal((await fetch(`${publishedBase}/title/swallowed-star-season-4`)).status, 200);
+    assert.equal((await fetch(`${publishedBase}/api/catalog/swallowed-star-season-4`)).status, 200);
+
+    // Listings include published posts, and a non-site category never does.
+    const list = await (await fetch(`${publishedBase}/api/catalog?type=donghua&limit=48`)).json();
+    assert.ok(list.items.some((entry) => entry.id === 'swallowed-star-season-4'));
+    assert.ok(!list.items.some((entry) => entry.id === 'a-kdrama'));
+
+    // A slug that does not exist gives a readable answer, not a bare 404.
+    const missing = await fetch(`${publishedBase}/donghua/not-a-real-post`);
+    assert.equal(missing.status, 404);
+    assert.match(await missing.text(), /not available/i);
+  } finally {
+    await new Promise((resolve) => publishedServer.close(resolve));
+    await publishedStore.close();
+  }
+});
