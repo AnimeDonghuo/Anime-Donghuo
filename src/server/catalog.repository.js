@@ -55,6 +55,7 @@ const LIST_CONTENT_PROJECTION = {
   shareCode: 1,
   hasDelivery: 1,
   stream: 1,
+  downloads: 1,
   'files.name': 1,
   'files.displayName': 1,
   'files.languages': 1,
@@ -397,6 +398,42 @@ function contentListFilter({ category, query, hideAdult = false, genre = null } 
   return filter;
 }
 
+/**
+ * Publisher-registered downloads for one post: MediaFire mirrors plus any Telegram
+ * deep link the publisher wants to show. Only https URLs on the approved hosts are
+ * stored, so the site never renders an arbitrary link.
+ */
+export function normalizeDownloads(value) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  const downloads = [];
+  for (const entry of value.slice(0, 10)) {
+    const raw = typeof entry === 'string' ? entry : entry?.url;
+    if (typeof raw !== 'string' || raw.length > 2048) continue;
+    let url;
+    try {
+      url = new URL(raw);
+    } catch {
+      continue;
+    }
+    if (url.protocol !== 'https:' || url.username || url.password || url.port) continue;
+    const host = url.hostname.toLowerCase();
+    const mediafire = host === 'mediafire.com' || host === 'www.mediafire.com';
+    const telegram = host === 't.me' || host === 'telegram.me';
+    if (!mediafire && !telegram) continue;
+    if (mediafire && !/^\/(?:file|view|download)\//.test(url.pathname)) continue;
+    if (seen.has(url.href)) continue;
+    seen.add(url.href);
+    const label = cleanText(typeof entry === 'object' ? entry?.label : '', 80);
+    downloads.push({
+      provider: mediafire ? 'MediaFire' : 'Telegram',
+      label: label || (mediafire ? 'MediaFire download' : 'Telegram delivery'),
+      url: url.href,
+    });
+  }
+  return downloads;
+}
+
 function normalizeAnnouncementRefs(value) {
   if (!Array.isArray(value)) return [];
   return value
@@ -682,6 +719,9 @@ function contentMetadataPatch(content, requested = {}) {
     ...(requested.category === undefined ? {} : { art: { ...(content.art || {}), tone: categoryDetails(category).tone } }),
     ...(requested.poster === undefined ? {} : { poster: requested.poster || null }),
     ...(requested.announcementRefs === undefined ? {} : { announcementRefs: normalizeAnnouncementRefs(requested.announcementRefs) }),
+    // Downloads are a first-class field: /postdownload and /checkanimexin write them
+    // through this same metadata patch.
+    ...(requested.downloads === undefined ? {} : { downloads: normalizeDownloads(requested.downloads) }),
     titleKey,
     automationKeys: uniqueKeys([...(content.automationKeys || []), content.automationKey, content.titleKey, titleKey, looseTitleKey]),
     // a metadata edit leaves the episode index alone, so it carries the existing one over
@@ -765,6 +805,9 @@ function normalizeContent(input) {
     // Manually imported player links are normalized/validated by the streaming
     // service before persistence. No media bytes are held by this field.
     stream: input.stream && typeof input.stream === 'object' ? clone(input.stream) : null,
+    // MediaFire mirrors the publisher registered for this post. Delivery still
+    // stays on Telegram for uploaded files; these are the external downloads.
+    downloads: normalizeDownloads(input.downloads),
     announcementRefs: normalizeAnnouncementRefs(input.announcementRefs),
     // titleKey makes same-title merging work for manual, batch, and older
     // records. Automation keeps raw and internet-verified aliases so slightly

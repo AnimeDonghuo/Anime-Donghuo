@@ -247,6 +247,23 @@ function renderFeatured(index = state.featuredIndex) {
   updateFeaturedButton();
 }
 
+/**
+ * The featured rotation: newest published posts first, then the latest catalogue
+ * titles. Fetched separately so a page capped by the static catalogue can never
+ * hide a fresh post from the hero.
+ */
+async function refreshFeatured() {
+  try {
+    const data = await request('/api/catalog?limit=48&sort=newest', { cache: 'no-store' });
+    const items = Array.isArray(data.items) ? data.items : [];
+    const posts = items.filter((item) => item.source === 'publisher').slice(0, 3);
+    const rest = items.filter((item) => item.source !== 'publisher').slice(0, 5 - posts.length);
+    setFeaturedTitles([...posts, ...rest]);
+  } catch {
+    // Keep the last good rotation.
+  }
+}
+
 function setFeaturedTitles(items) {
   // A post published through the bot is the newest thing on the site: it leads the
   // hero rotation instead of waiting behind the static catalogue's order.
@@ -381,6 +398,7 @@ function appendAuthorizedPlayers(container, title) {
     list.append(card);
   });
   container.append(list);
+  appendPlayerFallbackNote(container, title);
   return entries.length;
 }
 
@@ -546,9 +564,25 @@ function createPosterCard(title, index = 0) {
   info.append(element('div', 'poster-title', title.title));
   const labels = [title.type === 'donghua' ? 'Donghua' : 'Anime', title.format === 'movie' ? 'Movie' : 'Series'];
   if (title.status) labels.push(title.status[0].toUpperCase() + title.status.slice(1));
-  if (Number.isFinite(title.episodeCount) && title.format !== 'movie') labels.push(`${title.episodeCount} eps`);
+  if (Number.isFinite(title.episodeCount) && title.episodeCount > 0 && title.format !== 'movie') labels.push(`${title.episodeCount} eps`);
   if (Number.isFinite(title.rating)) labels.push(`★ ${title.rating.toFixed(1)}`);
   info.append(element('div', 'poster-sub', labels.join(' · ')));
+  // A visitor must be able to see that episodes are available and get to them from
+  // the card itself, without guessing that the poster is clickable.
+  const actions = element('div', 'poster-actions');
+  const episodes = Number.isFinite(title.episodeCount) ? title.episodeCount : 0;
+  const watch = element('a', 'poster-watch');
+  watch.href = `/watch/${encodeURIComponent(title.id)}`;
+  watch.textContent = episodes > 0
+    ? `▶ Watch ${episodes} episode${episodes === 1 ? '' : 's'}`
+    : '▶ Watch / details';
+  watch.addEventListener('click', (event) => event.stopPropagation());
+  actions.append(watch);
+  if (title.hasDownloads || title.downloadUrl || (Array.isArray(title.downloads) && title.downloads.length)) {
+    const download = element('span', 'poster-download', '⬇ Download');
+    actions.append(download);
+  }
+  info.append(actions);
   card.append(art, info);
   return card;
 }
@@ -1033,6 +1067,10 @@ document.addEventListener('click', (event) => {
     return;
   }
 
+  // A Watch/Download link inside a card is a real destination and must win over
+  // the card's own open-the-dialog handler.
+  if (target.closest('.poster-watch')) return;
+
   const card = target.closest('.poster, .continue-card, .update');
   if (card) {
     event.preventDefault();
@@ -1431,13 +1469,32 @@ function makeDeliveryPanel(title) {
     });
     panel.append(list);
   }
+  const downloads = Array.isArray(title.downloads) ? title.downloads : [];
+  if (downloads.length) {
+    const heading = element('h3', 'release-downloads-heading', 'Downloads');
+    panel.append(heading);
+    const list = element('div', 'release-download-list');
+    downloads.forEach((entry) => {
+      try {
+        const url = new URL(entry.url);
+        if (url.protocol !== 'https:' || !/(?:^|\.)(?:mediafire\.com|t\.me|telegram\.me)$/i.test(url.hostname)) return;
+        const link = element('a', 'release-download-link', entry.label || entry.provider || 'Download');
+        link.href = url.href;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.append(element('small', '', ` · ${entry.provider || 'Download'}`));
+        list.append(link);
+      } catch { /* ignore an unusable stored link */ }
+    });
+    panel.append(list);
+  }
   if (title.downloadUrl) {
     const mirror = element('a', 'delivery-link', 'Owner-provided download (MediaFire)');
     mirror.href = title.downloadUrl;
     mirror.target = '_blank';
     mirror.rel = 'noopener noreferrer';
     panel.append(mirror);
-  } else if (title.telegramUrl) {
+  } else if (!downloads.length && title.telegramUrl) {
     const open = element('a', 'delivery-link', 'Open delivery in Telegram');
     open.href = title.telegramUrl;
     open.target = '_blank';
@@ -1626,6 +1683,7 @@ function appendReleasePlayers(container, release) {
     list.append(card);
   });
   container.append(list);
+  appendPlayerFallbackNote(container, { title: release.title });
   return entries.length;
 }
 
@@ -2000,7 +2058,12 @@ async function refreshCatalog() {
     renderHomeShelves(data.items);
     renderHomeUpdates(data.items);
     setFeaturedTitles(data.items);
-    if (normalizedPath() === '/') void renderHomeReleases();
+    if (normalizedPath() === '/') {
+      void renderHomeReleases();
+      // The hero needs the newest posts even when a short page is capped by the
+      // static catalogue, so it is refreshed from its own listing.
+      void refreshFeatured();
+    }
     if (normalizedPath() !== '/') await renderCurrentPage();
   } catch {
     // Keep the last good catalogue visible when a refresh is temporarily unavailable.
@@ -2018,7 +2081,10 @@ async function initialize() {
       renderHomeShelves(data.items);
       renderHomeUpdates(data.items);
       setFeaturedTitles(data.items);
-      if (normalizedPath() === '/') void renderHomeReleases();
+      if (normalizedPath() === '/') {
+        void renderHomeReleases();
+        void refreshFeatured();
+      }
     })
     .catch(() => { showHomeShelvesUnavailable(); });
   const csrfTask = csrfToken().catch(() => {});

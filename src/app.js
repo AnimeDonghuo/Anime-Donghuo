@@ -223,6 +223,7 @@ function publicPublishedItem(content, config, { detailed = false } = {}) {
     ...(item.episodeCount > 0 ? { episodeCount: item.episodeCount } : {}),
     ...(item.publishedAt ? { addedAt: item.publishedAt } : {}),
     ...(item.telegramUrl ? { telegramUrl: item.telegramUrl } : {}),
+    ...(Array.isArray(content.downloads) && content.downloads.length ? { hasDownloads: true } : {}),
     ...(detailed && Number(item.filesCount) > 0 ? { filesCount: Number(item.filesCount) } : {}),
     ...(detailed && Array.isArray(item.fileChoices) && item.fileChoices.length
       ? {
@@ -242,8 +243,21 @@ function publicPublishedItem(content, config, { detailed = false } = {}) {
       }
       : {}),
     ...(detailed && item.deliveryUrl ? { deliveryUrl: item.deliveryUrl, deliveryReady: Boolean(item.deliveryReady) } : {}),
-    // MediaFire is the only external download host this site exposes.
+    // MediaFire is the only external download host this site exposes, plus the
+    // Telegram deep links the publisher registers themselves.
     ...(detailed && content.downloadUrl ? { downloadUrl: content.downloadUrl } : {}),
+    ...(detailed && Array.isArray(content.downloads) && content.downloads.length
+      ? {
+        downloads: content.downloads
+          .filter((entry) => entry?.url && /^https:\/\/(?:(?:www\.)?mediafire\.com|t\.me|telegram\.me)\//i.test(entry.url))
+          .slice(0, 10)
+          .map((entry) => ({
+            provider: entry.provider === 'Telegram' ? 'Telegram' : 'MediaFire',
+            label: entry.label || (entry.provider === 'Telegram' ? 'Telegram delivery' : 'MediaFire download'),
+            url: entry.url,
+          })),
+      }
+      : {}),
     publisherAdminId: content.adminId || null,
     source: 'publisher',
   };
@@ -495,9 +509,13 @@ export function createApp({ store, config, fetchImpl = fetch, releaseFeed = null
         })
         .map(({ item }) => item);
     }
-    const pageItems = filtered.slice(offset, offset + limit);
-    const mediaById = await store.getTitleMedia(pageItems.map((item) => item.id));
-    const staticItems = pageItems.map((item) => publicTitle(item, mediaById.get(item.id)));
+    // The page is cut *after* both catalogues are merged. Slicing the static list
+    // first meant a static page could fill every slot, which is why a newly
+    // published post never appeared in a short page or in the featured hero.
+    const mediaFor = async (rows) => store.getTitleMedia(rows.map((item) => item.id));
+    const staticPage = offset === 0 ? filtered : [];
+    const mediaById = await mediaFor(filtered);
+    const staticItems = staticPage.map((item) => publicTitle(item, mediaById.get(item.id)));
     // Published Telegram posts share the same catalogue. They always belong to
     // trending/updates/donghua/anime discovery, so a section filter other than
     // featured still includes them.
@@ -507,13 +525,12 @@ export function createApp({ store, config, fetchImpl = fetch, releaseFeed = null
         .filter((entry) => !query || `${entry.title} ${entry.description}`.toLowerCase().includes(query))
         .filter((entry) => !genre || entry.genres.some((value) => value.toLowerCase() === genre))
         .filter((entry) => !year || entry.year === year)
-        .slice(0, Math.max(0, limit - staticItems.length))
       : [];
-    // Newest first across both catalogues: the freshly published post belongs at
-    // the top of the page and in the featured hero, not after fifteen static rows.
-    const items = sort === 'newest'
+    // Newest first across both catalogues, then cut to one page.
+    const merged = sort === 'newest'
       ? interleaveNewest(staticItems, published)
       : [...staticItems, ...published];
+    const items = merged.slice(0, limit);
     response.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
     return response.json({
       items,

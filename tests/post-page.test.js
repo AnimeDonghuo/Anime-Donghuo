@@ -114,9 +114,54 @@ test('an unpublished draft is not public and the home shells stay dynamic', asyn
   }
 });
 
-test('the newest published post leads the catalogue and the hero rotation', async () => {
+test('the newest published post leads every page size, not just a long one', async () => {
+  for (const limit of [5, 20, 48]) {
+    const listing = await (await fetch(`${baseUrl}/api/catalog?limit=${limit}&sort=newest`)).json();
+    assert.equal(listing.items.length, Math.min(limit, listing.total));
+    assert.equal(listing.items[0].publisherAdminId, published.adminId, `a fresh post leads a limit=${limit} page`);
+    assert.ok(listing.items[0].imageUrl, 'the post reaches the hero with artwork');
+  }
+});
+
+test('/postdownload attaches MediaFire and Telegram links that the post page lists', async () => {
+  const { registerAppTelegramCommands } = await import('../src/telegram-bot.js');
+  let handler = null;
+  const bot = { use(fn) { handler = fn; } };
+  registerAppTelegramCommands(bot, { config, store, repository });
+
+  const replies = [];
+  const send = async (text) => {
+    const ctx = {
+      from: { id: 123456789 },
+      chat: { type: 'private' },
+      message: { text, entities: [{ type: 'bot_command', offset: 0, length: text.split(' ')[0].length }] },
+      reply: async (reply) => { replies.push(reply); },
+    };
+    await handler(ctx, async () => { replies.push('NEXT'); });
+  };
+
+  await send(`/postdownload ${published.adminId} https://www.mediafire.com/file/abc123/btth.mp4/file`);
+  await send(`/postdownload ${published.adminId} https://t.me/demo_bot?start=get-1`);
+  // An unapproved host is refused and changes nothing.
+  await send(`/postdownload ${published.adminId} https://evil.example/file.mp4`);
+  assert.match(replies.join('\n'), /Saved MediaFire download/);
+  assert.match(replies.join('\n'), /Saved Telegram download/);
+  assert.match(replies.join('\n'), /not accepted/);
+
+  const saved = await repository.findContentByAdminId(published.adminId);
+  assert.deepEqual(saved.downloads.map((entry) => entry.provider), ['MediaFire', 'Telegram']);
+
+  const { item } = await (await fetch(`${baseUrl}/api/catalog/${published.adminId}`)).json();
+  assert.equal(item.downloads.length, 2);
+  assert.ok(item.downloads.every((entry) => entry.url.startsWith('https://')));
+  assert.equal(item.downloads[0].provider, 'MediaFire');
+});
+
+test('a home card tells the visitor episodes are available and links to them', async () => {
   const listing = await (await fetch(`${baseUrl}/api/catalog?limit=48&sort=newest`)).json();
-  const first = listing.items[0];
-  assert.equal(first.publisherAdminId, published.adminId, 'a fresh post is not buried under the static catalogue');
-  assert.ok(first.imageUrl, 'the post reaches the hero with artwork');
+  const card = listing.items.find((entry) => entry.publisherAdminId === published.adminId);
+  assert.ok(Number.isInteger(card.episodeCount) || card.players?.length, 'the card carries what the Watch button needs');
+  // The client renders "▶ Watch N episodes" from this shape; the id must be usable as a route.
+  const page = await fetch(`${baseUrl}/watch/${encodeURIComponent(card.id)}`);
+  assert.equal(page.status, 200);
 });

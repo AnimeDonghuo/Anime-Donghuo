@@ -5,6 +5,7 @@ import { createAnimexinReleaseFeed } from './animexin-feed.js';
 import { checkAnimexin, checkAnimexinReport } from './animexin-check.js';
 import { extractAnimexinPlayers, normalizeTitle } from './posters.js';
 import { publicRelease } from './releases.js';
+import { normalizeDownloads } from './server/catalog.repository.js';
 import { mergeStreamingEntries, safeStreamingLink } from './server/services/streaming-service.js';
 
 const maxImageBytes = 10 * 1024 * 1024;
@@ -16,7 +17,7 @@ function parseCommand(message) {
     : (message.reply_to_message?.caption || message.reply_to_message?.text);
   if (typeof commandText !== 'string') return null;
   const firstLine = commandText.split(/\r?\n/, 1)[0].trim();
-  const match = firstLine.match(/^\/(poster|catalogposter|download|help|animexinplayers|releases|releasedownload|checkanimexin)(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]*))?$/i);
+  const match = firstLine.match(/^\/(poster|catalogposter|download|postdownload|help|animexinplayers|releases|releasedownload|checkanimexin)(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]*))?$/i);
   return match ? { command: match[1].toLowerCase(), args: (match[2] || '').trim() } : null;
 }
 
@@ -342,7 +343,7 @@ async function handleAnimexinPlayers(ctx, { config, store, repository, publisher
     }
   }
 
-  const names = extracted.players.map((player) => player.provider).join(' and ');
+  const names = [...new Set(extracted.players.map((player) => player.provider))].join(' and ');
   await ctx.reply(`Saved ${extracted.players.length} authorized Animexin player${extracted.players.length === 1 ? '' : 's'} for ${item.title}: ${names}. Only Dailymotion and Rumble links were accepted.`);
   return true;
 }
@@ -419,7 +420,7 @@ export function registerAppTelegramCommands(bot, { config, store, repository = n
     const message = ctx.message;
     if (!message) return next();
     const command = parseCommand(message);
-    if (!command || !['poster', 'catalogposter', 'download', 'animexinplayers', 'releases', 'releasedownload', 'checkanimexin'].includes(command.command)) return next();
+    if (!command || !['poster', 'catalogposter', 'download', 'postdownload', 'animexinplayers', 'releases', 'releasedownload', 'checkanimexin'].includes(command.command)) return next();
     const userId = String(ctx.from?.id || '');
     if (!config.telegramAdminIds.includes(userId)) return next();
     if (ctx.chat?.type !== 'private') {
@@ -451,6 +452,40 @@ export function registerAppTelegramCommands(bot, { config, store, repository = n
         console.error('[telegram] /checkanimexin failed:', error?.message || 'Unknown error');
         await ctx.reply('The Animexin check could not finish. The website keeps the last stored posts; try again shortly.');
       }
+      return;
+    }
+    if (command.command === 'postdownload') {
+      if (!repository) {
+        await ctx.reply('The publisher catalog is not available, so there is no post to attach a download to.');
+        return;
+      }
+      const [postId, ...urlParts] = command.args.split(/\s+/);
+      const adminId = String(postId || '').trim().toUpperCase();
+      if (!/^SB-[A-F0-9]{10}$/.test(adminId)) {
+        await ctx.reply('Usage: /postdownload SB-XXXXXXXXXX https://www.mediafire.com/file/…\nAdd a MediaFire mirror or a t.me link to a published post. Find the Post ID with /search or /posts.');
+        return;
+      }
+      const url = urlParts.join(' ').trim();
+      const downloads = normalizeDownloads([url]);
+      if (!downloads.length) {
+        await ctx.reply('That link is not accepted. Use an https MediaFire file link or a t.me delivery link you own or may distribute.');
+        return;
+      }
+      const content = await repository.findContentByAdminId(adminId).catch(() => null);
+      if (!content) {
+        await ctx.reply(`No post matched ${adminId}. Use /posts to list recent Post IDs.`);
+        return;
+      }
+      const merged = normalizeDownloads([
+        ...(Array.isArray(content.downloads) ? content.downloads : []),
+        ...downloads,
+      ]);
+      const updated = await repository.updateContentByAdminId(adminId, { downloads: merged }).catch(() => null);
+      if (!updated) {
+        await ctx.reply('The post could not be updated. Its downloads were left unchanged.');
+        return;
+      }
+      await ctx.reply(`Saved ${downloads[0].provider} download for ${content.title} (${adminId}). The post now lists ${merged.length} download${merged.length === 1 ? '' : 's'}. ${publisherConfig?.siteUrl || ''}/${content.category || 'donghua'}/${content.slug}`);
       return;
     }
     if (command.command === 'download') {

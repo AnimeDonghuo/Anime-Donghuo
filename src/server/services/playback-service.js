@@ -154,13 +154,13 @@ export function verifyPlaybackCsrf(request, config = {}) {
   // 1. Fetch Metadata defense: Sec-Fetch-Site
   const secFetchSite = request.headers['sec-fetch-site'];
   if (secFetchSite && secFetchSite.toLowerCase() === 'cross-site') {
-    return { valid: false, error: 'Cross-site playback token requests are forbidden.' };
+    return { valid: false, error: 'Playback tokens must be requested by the site itself, not by another website. Open the title page on Anime Donghua and press play.' };
   }
 
   // 2. Sec-Fetch-Mode check (if present, must not be direct browser top-level navigation)
   const secFetchMode = request.headers['sec-fetch-mode'];
   if (secFetchMode && secFetchMode.toLowerCase() === 'navigate') {
-    return { valid: false, error: 'Direct navigation requests are forbidden.' };
+    return { valid: false, error: 'A playback token is issued to the site\u2019s own player, so it cannot be opened as a page in the address bar. Open the watch page on Anime Donghua instead of /api/playback-token.' };
   }
 
   // 3. Origin check (if present)

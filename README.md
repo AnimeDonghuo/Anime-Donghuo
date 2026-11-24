@@ -91,6 +91,10 @@ Admins can review and extend the list from a private chat with the bot: `/releas
 
 Artwork comes from the release page's own featured image (including the Jetpack/WordPress CDN Animexin serves it from) and is re-hosted on ImgBB, so every post has a poster that stays up; when ImgBB is not configured the scraped URL is used as-is.
 
+Downloads on a post are the publisher's own: `/postdownload <SB-ID> <https://www.mediafire.com/file/...>` adds a MediaFire mirror, and the same command accepts a `t.me` link so you can point a post at your own Telegram delivery. The post page lists them under Downloads, and a card shows a Download chip. Uploaded files still deliver through the bot, and `.mp4` uploads added in the post are playable on the post page itself.
+
+Every catalogue card now carries its own Watch button (`▶ Watch N episodes`), so a visitor can reach the episodes from the home page without knowing the poster is clickable.
+
 `/checkanimexin` runs that reconciliation on demand instead of waiting for the schedule: it reads the feed, every release page, attaches the approved English Dailymotion/Rumble players to a post that already exists for the episode (no duplicate card), and publishes any episode that has no post yet. It replies with the Post IDs and the `/donghua/<slug>` page it created or updated, and it removes the non-episode cards an early homepage scan could publish (theme-menu entries such as "Genres" or "Release Date") together with any duplicate episode card.
 
 The home page is rendered from the live catalogue. `/api/catalog` supplies the hero, the Featured/Donghua/Anime shelves, and the latest-posts row, so a post published through the bot appears there on the next refresh without a redeploy. Only `anime` and `donghua` (plus their movie formats) are exposed, and an unpublished draft is never served — not in a shelf, not by slug, and not by Post ID.

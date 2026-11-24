@@ -1,6 +1,7 @@
 import { catalogItems } from './catalog.js';
 import { uploadImageToImgBB } from './image-hosting.js';
 import { safeStreamingLink } from './server/services/streaming-service.js';
+import { parseAnimexinRelease } from './animexin-feed.js';
 
 const requestTimeoutMs = 7_000;
 const maxPosterBytes = 8 * 1024 * 1024;
@@ -368,7 +369,25 @@ function animexinPageMatchesTitle(html, item) {
   return false;
 }
 
-function normalizedAnimexinPlayers(html) {
+function normalizedAnimexinPlayers(html, pageUrl = null) {
+  // The release parser already decides which servers are English Dailymotion or
+  // Rumble (including unlabelled ones on an English page). Reusing it keeps
+  // /animexinplayers and /checkanimexin from disagreeing about the same page.
+  if (pageUrl) {
+    try {
+      const parsed = parseAnimexinRelease(html, pageUrl);
+      if (parsed.players.length) {
+        return parsed.players.slice(0, 8).map((player) => ({
+          provider: player.provider,
+          label: player.label || player.provider,
+          embedUrl: player.embedUrl,
+          watchUrl: player.watchUrl,
+        }));
+      }
+    } catch {
+      // Fall through to the raw-URL scan below.
+    }
+  }
   const players = [];
   const seen = new Set();
   for (const raw of playerUrlsFromAnimexin(html)) {
@@ -418,7 +437,7 @@ export async function extractAnimexinPlayers(item, config, fetchImpl = fetch, { 
   const pageHtml = await fetchAnimexinHtml(detailUrl, fetchImpl);
   if (!pageHtml) return { sourceUrl: detailUrl.href, players: [] };
   if (pageUrl && !animexinPageMatchesTitle(pageHtml, item)) return { sourceUrl: detailUrl.href, players: [] };
-  return { sourceUrl: detailUrl.href, players: normalizedAnimexinPlayers(pageHtml) };
+  return { sourceUrl: detailUrl.href, players: normalizedAnimexinPlayers(pageHtml, detailUrl.href) };
 }
 
 export async function findPosterSource(item, config, fetchImpl = fetch) {
