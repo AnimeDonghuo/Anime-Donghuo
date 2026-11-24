@@ -238,11 +238,17 @@ export function createApp({ store, config }) {
     const status = request.query.status;
     const section = request.query.section;
     const genre = typeof request.query.genre === 'string' ? request.query.genre.trim().toLowerCase() : '';
+    const yearValue = request.query.year;
+    const year = yearValue === undefined
+      ? undefined
+      : (typeof yearValue === 'string' && /^\d{4}$/.test(yearValue) && Number(yearValue) >= 1900 && Number(yearValue) <= 2100 ? Number(yearValue) : null);
     const sort = request.query.sort;
     const limit = parsePositiveInteger(request.query.limit, 24, 48);
     const offset = parsePositiveInteger(request.query.offset, 0, 1000);
 
-    if (query.length > 100 || limit === null || offset === null || (sort !== undefined && sort !== 'newest')) {
+    if (query.length > 100 || limit === null || offset === null
+      || (yearValue !== undefined && year === null)
+      || (sort !== undefined && sort !== 'newest')) {
       return sendValidationError(response, 'Invalid catalogue filters.');
     }
     if (type !== undefined && !['anime', 'donghua'].includes(type)) {
@@ -262,11 +268,12 @@ export function createApp({ store, config }) {
     }
 
     let filtered = catalogItems.filter((item) => {
-      const searchable = `${item.title} ${item.description} ${item.genres.join(' ')}`.toLowerCase();
+      const searchable = `${item.title} ${(item.alternativeTitles || []).join(' ')} ${item.description} ${item.genres.join(' ')}`.toLowerCase();
       return (!query || searchable.includes(query))
         && (!type || item.type === type)
         && (!format || item.format === format)
         && (!status || item.status === status)
+        && (!year || item.year === year)
         && (!section || item.sections.includes(section))
         && (!genre || item.genres.some((itemGenre) => itemGenre.toLowerCase() === genre));
     });
@@ -425,8 +432,12 @@ export function createApp({ store, config }) {
     },
   }));
 
-  app.get(['/trending', '/updates', '/donghua', '/anime', '/ongoing', '/movies', '/categories', '/continue-watching', '/my-list', '/profile'], (_request, response) => {
+  app.get(['/trending', '/updates', '/donghua', '/anime', '/ongoing', '/movies', '/categories', '/continue-watching', '/my-list', '/profile', '/discover', '/schedule'], (_request, response) => {
     response.set('Cache-Control', 'no-cache').sendFile(`${publicDirectory}/index.html`);
+  });
+  app.get(['/title/:id', '/watch/:id'], (request, response, next) => {
+    if (!catalogById.has(request.params.id)) return next();
+    return response.set('Cache-Control', 'no-cache').sendFile(`${publicDirectory}/index.html`);
   });
   app.get('/genre/:slug', (request, response, next) => {
     if (!/^[a-z0-9-]{1,40}$/i.test(request.params.slug)) return next();

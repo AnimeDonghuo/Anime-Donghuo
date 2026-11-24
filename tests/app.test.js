@@ -46,18 +46,23 @@ test('health, readiness, and homepage are served safely', async () => {
   assert.match(homeResponse.headers.get('content-security-policy'), /script-src 'self'/);
   assert.equal(homeResponse.headers.get('x-powered-by'), null);
   const homeHtml = await homeResponse.text();
+  assert.match(homeHtml, /<title>AniVerse/);
   assert.match(homeHtml, /Perfect<br>World/);
   assert.match(homeHtml, /anime-donghua-mark\.jpg/);
-  assert.match(homeHtml, /app\.css\?v=mobile-recovery-2/);
-  assert.match(homeHtml, /app\.js\?v=mobile-recovery-2/);
+  assert.match(homeHtml, /aniverse-blue-dragon\.png/);
+  assert.match(homeHtml, /app\.css\?v=aniverse-v1/);
+  assert.match(homeHtml, /app\.js\?v=aniverse-v1/);
   assert.match(homeHtml, /width:100vw!important;max-width:none!important/);
+  assert.match(homeHtml, /No saved playback progress yet/);
+  assert.doesNotMatch(homeHtml, /EP\s?\d+|hours ago|★ 9\.4|200\+ eps/);
+  assert.doesNotMatch(homeHtml, /<span class="rank">/);
   assert.doesNotMatch(homeHtml, /\son(?:click|input)=/);
 });
 
 test('versioned frontend assets bypass stale browser cache', async () => {
   const [cssResponse, jsResponse] = await Promise.all([
-    fetch(`${baseUrl}/app.css?v=mobile-recovery-2`),
-    fetch(`${baseUrl}/app.js?v=mobile-recovery-2`),
+    fetch(`${baseUrl}/app.css?v=aniverse-v1`),
+    fetch(`${baseUrl}/app.js?v=aniverse-v1`),
   ]);
   assert.equal(cssResponse.status, 200);
   assert.equal(jsResponse.status, 200);
@@ -67,25 +72,54 @@ test('versioned frontend assets bypass stale browser cache', async () => {
 });
 
 test('navigation destinations work when opened directly as separate pages', async () => {
-  const paths = ['/trending', '/updates', '/donghua', '/anime', '/ongoing', '/movies', '/categories', '/continue-watching', '/my-list', '/profile', '/genre/action'];
+  const paths = ['/trending', '/updates', '/donghua', '/anime', '/ongoing', '/movies', '/categories', '/continue-watching', '/my-list', '/profile', '/discover', '/schedule', '/title/perfect-world', '/watch/perfect-world', '/genre/action'];
   const responses = await Promise.all(paths.map((path) => fetch(`${baseUrl}${path}`)));
   for (const response of responses) {
     assert.equal(response.status, 200);
     assert.match(response.headers.get('content-type'), /text\/html/);
     assert.match(await response.text(), /id="routeMain"/);
   }
-  const unknown = await fetch(`${baseUrl}/not-a-page`);
+  const [unknown, unknownTitle] = await Promise.all([
+    fetch(`${baseUrl}/not-a-page`),
+    fetch(`${baseUrl}/title/not-a-title`),
+  ]);
   assert.equal(unknown.status, 404);
+  assert.equal(unknownTitle.status, 404);
 });
 
-test('public catalogue titles retain artwork and newest-entry metadata', () => {
+test('public catalogue titles retain safe artwork and verified metadata only', () => {
   const mapped = publicTitle({
     ...catalogItems[0],
     imageUrl: '/assets/perfect-world-poster.jpg',
     addedAt: '2026-11-24T10:00:00.000Z',
+    upcomingReleaseAt: '2026-12-01T10:00:00.000Z',
+    year: 2024,
+    alternativeTitles: ['  Alias  ', '<script>unsafe</script>'],
+    languages: ['Chinese', 'English'],
+    subtitles: ['English'],
+    episodeCount: 12,
+    rating: 8.4,
+    latestEpisode: { number: 4, season: 1, title: 'Episode title', releaseAt: '2026-11-23T00:00:00.000Z' },
+    releaseSchedule: [
+      { day: 'monday', time: '18:30 CST', episode: 5 },
+      { day: 'Notaday', time: '25:99', episode: 6 },
+    ],
+    watchUrl: 'https://untrusted.example/video',
   });
   assert.equal(mapped.imageUrl, '/assets/perfect-world-poster.jpg');
   assert.equal(mapped.addedAt, '2026-11-24T10:00:00.000Z');
+  assert.equal(mapped.upcomingReleaseAt, '2026-12-01T10:00:00.000Z');
+  assert.equal(mapped.year, 2024);
+  assert.deepEqual(mapped.alternativeTitles, ['Alias', '<script>unsafe</script>']);
+  assert.deepEqual(mapped.languages, ['Chinese', 'English']);
+  assert.deepEqual(mapped.subtitles, ['English']);
+  assert.equal(mapped.episodeCount, 12);
+  assert.equal(mapped.rating, 8.4);
+  assert.deepEqual(mapped.latestEpisode, { number: 4, season: 1, title: 'Episode title', releaseAt: '2026-11-23T00:00:00.000Z' });
+  assert.deepEqual(mapped.releaseSchedule, [{ day: 'Monday', time: '18:30 CST', episode: 5 }]);
+  assert.equal('watchUrl' in mapped, false);
+  assert.equal('rating' in publicTitle({ ...catalogItems[0], rating: 100 }), false);
+  assert.equal('episodeCount' in publicTitle({ ...catalogItems[0], episodeCount: -1 }), false);
 });
 
 test('catalogue supports bounded filters and returns only public fields', async () => {
@@ -94,6 +128,7 @@ test('catalogue supports bounded filters and returns only public fields', async 
   const payload = await response.json();
   assert.ok(payload.items.some((item) => item.id === 'perfect-world'));
   assert.ok(payload.items.every((item) => item.type === 'donghua'));
+  assert.ok(payload.items.every((item) => !('rating' in item) && !('episodeCount' in item)));
   assert.equal('watchUrl' in payload.items[0], false);
 
   const ongoingResponse = await fetch(`${baseUrl}/api/catalog?status=ongoing&limit=48`);
@@ -105,11 +140,20 @@ test('catalogue supports bounded filters and returns only public fields', async 
   const newestResponse = await fetch(`${baseUrl}/api/catalog?sort=newest&limit=5`);
   assert.equal(newestResponse.status, 200);
   assert.equal((await newestResponse.json()).items.length, 5);
+  const yearResponse = await fetch(`${baseUrl}/api/catalog?year=2024`);
+  assert.equal(yearResponse.status, 200);
+  assert.deepEqual((await yearResponse.json()).items, []);
+  const searchResponse = await fetch(`${baseUrl}/api/catalog?q=perfect`);
+  assert.ok((await searchResponse.json()).items.some((item) => item.id === 'perfect-world'));
 
   const invalid = await fetch(`${baseUrl}/api/catalog?type=pirate`);
   assert.equal(invalid.status, 400);
   const invalidSort = await fetch(`${baseUrl}/api/catalog?sort=oldest`);
   assert.equal(invalidSort.status, 400);
+  const invalidYear = await fetch(`${baseUrl}/api/catalog?year=1899`);
+  assert.equal(invalidYear.status, 400);
+  const malformedYear = await fetch(`${baseUrl}/api/catalog?year=20xx`);
+  assert.equal(malformedYear.status, 400);
 });
 
 test('account creation requires CSRF, stores encrypted profile values, and supports saved titles', async () => {

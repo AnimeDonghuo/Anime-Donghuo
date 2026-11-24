@@ -17,7 +17,42 @@ const state = {
   csrfToken: null,
   authMode: 'login',
   browse: null,
+  discoveryRequestId: 0,
+  scheduleDay: null,
+  preferences: { preferredType: 'all', reduceMotion: false },
 };
+const preferenceStorageKey = 'aniverse:preferences';
+
+function loadPreferences() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(preferenceStorageKey) || '{}');
+    return {
+      preferredType: ['all', 'anime', 'donghua'].includes(saved.preferredType) ? saved.preferredType : 'all',
+      reduceMotion: saved.reduceMotion === true,
+    };
+  } catch {
+    return { preferredType: 'all', reduceMotion: false };
+  }
+}
+
+function applyPreferences() {
+  document.documentElement.classList.toggle('reduce-motion', state.preferences.reduceMotion);
+}
+
+function persistPreferences(preferences) {
+  state.preferences = {
+    preferredType: ['all', 'anime', 'donghua'].includes(preferences.preferredType) ? preferences.preferredType : 'all',
+    reduceMotion: preferences.reduceMotion === true,
+  };
+  applyPreferences();
+  startFeaturedRotation();
+  try {
+    localStorage.setItem(preferenceStorageKey, JSON.stringify(state.preferences));
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 class ApiError extends Error {
   constructor(message, status) {
@@ -59,8 +94,9 @@ function appendArtwork(container, title, className = 'catalog-artwork') {
   if (!src) return false;
   const image = element('img', className);
   image.src = src;
-  image.alt = title.title ? `${title.title} artwork` : 'Title artwork';
-  image.loading = 'lazy';
+  image.alt = className === 'hero-image' ? 'Blue dragon and hero artwork' : (title.title ? `${title.title} artwork` : 'Title artwork');
+  image.loading = className === 'hero-image' ? 'eager' : 'lazy';
+  if (className === 'hero-image') image.fetchPriority = 'high';
   image.decoding = 'async';
   image.addEventListener('error', () => {
     image.remove();
@@ -173,7 +209,8 @@ function renderFeatured(index = state.featuredIndex) {
 
   heading.textContent = title.title;
   description.textContent = title.description || 'Discover the story, characters, and latest catalogue details.';
-  rating.textContent = Number.isFinite(title.rating) ? `★ ${title.rating.toFixed(1)}` : '★ Featured';
+  rating.hidden = !Number.isFinite(title.rating);
+  rating.textContent = rating.hidden ? '' : `★ ${title.rating.toFixed(1)}`;
   hero.classList.toggle('hero--anime', title.type === 'anime');
   tags.replaceChildren();
   [title.type === 'donghua' ? 'Donghua' : 'Anime', ...(title.genres || []).slice(0, 3)]
@@ -213,7 +250,7 @@ function setFeaturedTitles(items) {
 
 function startFeaturedRotation() {
   if (state.featuredTimer) window.clearInterval(state.featuredTimer);
-  if (state.featured.length < 2) return;
+  if (state.featured.length < 2 || state.preferences.reduceMotion) return;
   state.featuredTimer = window.setInterval(() => {
     if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
     renderFeatured((state.featuredIndex + 1) % state.featured.length);
@@ -282,44 +319,79 @@ function showTitleDetails(title) {
     type,
     format,
     status,
-    Number.isFinite(title.episodeCount) && title.format !== 'movie' ? `${title.episodeCount} episodes` : '',
+    Number.isInteger(title.year) ? String(title.year) : '',
+    Number.isInteger(title.episodeCount) && title.format !== 'movie' ? `${title.episodeCount} episodes` : '',
     Number.isFinite(title.rating) ? `★ ${title.rating.toFixed(1)}` : '',
   ]
     .filter(Boolean)
     .forEach((label) => meta.append(element('span', 'dialog-chip', label)));
   content.append(meta);
-  content.append(element('p', 'dialog-description', title.description || 'Explore this title in the Anime Donghua catalogue.'));
+  content.append(element('p', 'dialog-description', title.description || 'Explore this title in the AniVerse catalogue.'));
 
   if (title.genres?.length) {
     const genres = element('div', 'dialog-meta');
     title.genres.forEach((genre) => genres.append(element('span', 'dialog-chip', genre)));
     content.append(genres);
   }
+  if (title.alternativeTitles?.length) {
+    content.append(element('p', 'title-aliases', `Also known as: ${title.alternativeTitles.join(', ')}`));
+  }
+  if (title.languages?.length || title.subtitles?.length) {
+    const languageDetails = element('div', 'title-languages');
+    if (title.languages?.length) languageDetails.append(element('p', '', `Audio: ${title.languages.join(', ')}`));
+    if (title.subtitles?.length) languageDetails.append(element('p', '', `Subtitles: ${title.subtitles.join(', ')}`));
+    content.append(languageDetails);
+  }
+  if (title.latestEpisode) {
+    const episode = title.latestEpisode;
+    const parts = [];
+    if (Number.isInteger(episode.season)) parts.push(`Season ${episode.season}`);
+    if (Number.isInteger(episode.number)) parts.push(`Episode ${episode.number}`);
+    if (episode.title) parts.push(episode.title);
+    if (episode.releaseAt) parts.push(new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(episode.releaseAt)));
+    if (parts.length) content.append(element('p', 'title-latest-episode', `Latest verified update: ${parts.join(' · ')}`));
+  }
+  if (title.releaseSchedule?.length) {
+    const schedule = element('div', 'dialog-note');
+    schedule.append(element('strong', '', 'Verified release schedule'));
+    const list = element('ul', 'title-schedule-list');
+    title.releaseSchedule.forEach((entry) => {
+      list.append(element('li', '', `${entry.day} · ${entry.time}${Number.isInteger(entry.episode) ? ` · Episode ${entry.episode}` : ''}`));
+    });
+    schedule.append(list);
+    content.append(schedule);
+  }
 
   const note = element('div', 'dialog-note');
-  note.append(element('strong', '', 'Playback source not connected. '));
-  note.append(document.createTextNode('This catalogue does not host or proxy video. Add an authorized streaming provider before playback can begin.'));
+  note.append(element('strong', '', 'Playback is not configured. '));
+  note.append(document.createTextNode('AniVerse does not host or proxy video. A title can play only after an authorized streaming source is provided.'));
   content.append(note);
 
   const actions = element('div', 'dialog-actions');
   const isSaved = state.favorites.has(title.id);
   actions.append(makeButton(isSaved ? '♥ Remove from My List' : '＋ Add to My List', 'toggle-favorite', 'dialog-button', { id: title.id }));
-  actions.append(makeButton(title.format === 'movie' ? '▶ View movie' : '▶ Watch now', 'watch-title', 'dialog-button primary', { id: title.id }));
+  actions.append(makeButton('▶ Open playback view', 'watch-title', 'dialog-button primary', { id: title.id }));
+  const fullDetails = element('a', 'dialog-button', 'Full title page');
+  fullDetails.href = `/title/${encodeURIComponent(title.id)}`;
+  actions.append(fullDetails);
   content.append(actions);
 }
 
 function showWatch(title) {
-  const { content } = createDialog(title.title, 'NOW PLAYING', 'WATCH');
+  const { content } = createDialog(title.title, 'Playback unavailable', 'PLAYER');
   const player = element('div', 'player-placeholder');
-  player.setAttribute('aria-label', 'No licensed playback source is connected');
+  player.setAttribute('role', 'status');
   player.append(element('div', 'player-symbol', '▶'));
-  player.append(element('p', 'player-message', 'No licensed stream is configured for this title yet.'));
+  player.append(element('p', 'player-message', 'No authorized video source is configured for this title.'));
   content.append(player);
   const note = element('div', 'dialog-note');
-  note.append(element('strong', '', 'Ready for an authorized provider. '));
-  note.append(document.createTextNode('When you add a legal streaming source, this player view can open it here.'));
+  note.append(element('strong', '', 'No stream is being requested or embedded. '));
+  note.append(document.createTextNode('AniVerse does not host or proxy video. Playback can be enabled only when an authorized provider URL is supplied.'));
   content.append(note);
   content.append(makeButton('← Back to title details', 'open-title', 'dialog-button', { id: title.id }));
+  const playerPage = element('a', 'dialog-button', 'Open full player page');
+  playerPage.href = `/watch/${encodeURIComponent(title.id)}`;
+  content.append(playerPage);
 }
 
 async function openTitle(id, mode = 'details') {
@@ -363,7 +435,7 @@ function makeBrowseItem(title) {
   return button;
 }
 
-function createPosterCard(title, index = 0, ranked = false) {
+function createPosterCard(title, index = 0) {
   const card = element('article', 'poster');
   card.tabIndex = 0;
   card.setAttribute('role', 'button');
@@ -377,7 +449,6 @@ function createPosterCard(title, index = 0, ranked = false) {
     const initials = title.title.split(/\s+/).filter(Boolean).slice(0, 3).map((word) => word.slice(0, 8)).join(' ');
     art.append(element('div', 'art-label', initials.toUpperCase()));
   }
-  if (ranked && index < 3) art.append(element('span', 'rank', `♛ ${index + 1}`));
   const info = element('div', 'poster-info');
   info.append(element('div', 'poster-title', title.title));
   const labels = [title.type === 'donghua' ? 'Donghua' : 'Anime', title.format === 'movie' ? 'Movie' : 'Series'];
@@ -389,13 +460,49 @@ function createPosterCard(title, index = 0, ranked = false) {
   return card;
 }
 
+function verifiedUpdateTitles(items = [...state.catalog.values()]) {
+  return [...items]
+    .filter((title) => title.latestEpisode && latestEpisodeSummary(title))
+    .sort((left, right) => {
+      const leftTime = Date.parse(left.latestEpisode.releaseAt || '') || 0;
+      const rightTime = Date.parse(right.latestEpisode.releaseAt || '') || 0;
+      return rightTime - leftTime;
+    });
+}
+
+function makeUpdateCard(title) {
+  const card = element('article', 'update');
+  card.tabIndex = 0;
+  card.setAttribute('role', 'button');
+  card.setAttribute('aria-label', `Open ${title.title} update details`);
+  const art = element('div', 'update-art');
+  appendArtwork(art, title, 'catalog-artwork');
+  const copy = element('div');
+  copy.append(element('strong', '', title.title));
+  copy.append(element('small', '', latestEpisodeSummary(title)));
+  card.append(art, copy);
+  return card;
+}
+
+function renderHomeUpdates(items) {
+  const container = document.getElementById('updatesList');
+  if (!container) return;
+  const updates = verifiedUpdateTitles(items);
+  container.replaceChildren();
+  if (!updates.length) {
+    container.append(element('div', 'catalogue-empty', 'Verified episode updates are not configured yet.'));
+    return;
+  }
+  updates.slice(0, 3).forEach((title) => container.append(makeUpdateCard(title)));
+}
+
 function renderHomeCollections(items) {
   const sections = [
-    { selector: '#trending .cards', key: 'trending', ranked: true },
+    { selector: '#trending .cards', key: 'trending' },
     { selector: '#donghua .cards', key: 'donghua' },
     { selector: '#anime .cards', key: 'anime' },
   ];
-  sections.forEach(({ selector, key, ranked }) => {
+  sections.forEach(({ selector, key }) => {
     const grid = document.querySelector(selector);
     if (!grid) return;
     const titles = items.filter((title) => title.sections?.includes(key)).slice(0, 6);
@@ -406,14 +513,14 @@ function renderHomeCollections(items) {
         return name && titleByName(name)?.id === title.id;
       });
       if (existing) {
-        if (artworkUrl(title)) existing.replaceWith(createPosterCard(title, index, ranked));
+        if (artworkUrl(title)) existing.replaceWith(createPosterCard(title, index));
         return;
       }
       additions.push({ title, index });
     });
     additions.reverse().forEach(({ title, index }) => {
       if (grid.children.length >= 6) grid.lastElementChild.remove();
-      grid.prepend(createPosterCard(title, index, ranked));
+      grid.prepend(createPosterCard(title, index));
     });
   });
 }
@@ -479,7 +586,7 @@ function showMyList() {
   const { content } = createDialog('My List', 'Your saved anime and donghua are gathered here.');
   if (!state.favorites.size) {
     content.append(element('div', 'dialog-empty', 'Your list is empty. Open a title and choose “Add to My List” to save it here.'));
-    content.append(makeButton('Explore trending titles', 'browse-section', 'dialog-button primary', { section: 'trending' }));
+    content.append(makeButton('Explore featured titles', 'browse-section', 'dialog-button primary', { section: 'trending' }));
     if (!state.user) {
       content.append(element('p', 'form-help', 'Sign in to sync your list across devices.'));
       content.append(makeButton('Sign in', 'account', 'dialog-button'));
@@ -498,26 +605,48 @@ function showMyList() {
   }
 }
 
+function latestEpisodeSummary(title) {
+  const episode = title.latestEpisode;
+  if (!episode) return '';
+  const parts = [];
+  if (Number.isInteger(episode.season)) parts.push(`Season ${episode.season}`);
+  if (Number.isInteger(episode.number)) parts.push(`Episode ${episode.number}`);
+  if (episode.title) parts.push(episode.title);
+  if (episode.releaseAt) parts.push(new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(episode.releaseAt)));
+  return parts.join(' · ');
+}
+
 function showUpdates() {
-  const { content } = createDialog('Latest updates', 'Recently listed episodes across the catalogue.');
+  const { content } = createDialog('Latest updates', 'Episode information is shown only when verified metadata is available.');
   const grid = element('div', 'browse-grid');
-  document.querySelectorAll('#updates .update').forEach((row) => {
-    const title = titleFromCard(row);
-    if (title) grid.append(makeBrowseItem(title));
+  const updates = [...state.catalog.values()]
+    .filter((title) => title.latestEpisode && latestEpisodeSummary(title))
+    .sort((left, right) => new Date(right.latestEpisode.releaseAt || 0) - new Date(left.latestEpisode.releaseAt || 0));
+  updates.forEach((title) => {
+    const row = makeBrowseItem(title);
+    const summary = row.querySelector('small');
+    if (summary) summary.textContent = latestEpisodeSummary(title);
+    grid.append(row);
   });
-  if (!grid.childElementCount) grid.append(element('div', 'dialog-empty', 'There are no new episode updates yet.'));
+  if (!grid.childElementCount) grid.append(element('div', 'dialog-empty', 'No verified episode updates are available yet.'));
   content.append(grid);
+}
+
+function showNotifications() {
+  const { content } = createDialog('Notifications', 'Updates will appear here when a verified release feed is connected.');
+  content.append(element('div', 'dialog-empty', 'There are no verified release notifications right now.'));
 }
 
 function showAccount() {
   if (!state.user) return showAuth('login');
-  const { content } = createDialog('Your account', 'Your Anime Donghua account and saved titles.');
+  const { content } = createDialog('Your account', 'Your AniVerse account and saved titles.');
   const profile = element('div', 'profile-card');
-  profile.append(element('div', 'profile-name', state.user.displayName || 'Anime Donghua fan'));
+  profile.append(element('div', 'profile-name', state.user.displayName || 'AniVerse fan'));
   profile.append(element('div', 'profile-email', state.user.email || ''));
   content.append(profile);
   const actions = element('div', 'dialog-actions');
   actions.append(makeButton(`My List (${state.favorites.size})`, 'my-list', 'dialog-button primary'));
+  actions.append(makeButton('Profile & preferences', 'navigate', 'dialog-button', { path: '/profile' }));
   actions.append(makeButton('Sign out', 'logout', 'dialog-button'));
   content.append(actions);
 }
@@ -525,7 +654,7 @@ function showAccount() {
 function showAuth(mode = 'login') {
   state.authMode = mode === 'register' ? 'register' : 'login';
   const isRegister = state.authMode === 'register';
-  const { content } = createDialog(isRegister ? 'Create your account' : 'Welcome back', 'Save your list and keep your preferences together.', 'ANIME DONGHUA ACCOUNT');
+  const { content } = createDialog(isRegister ? 'Create your account' : 'Welcome back', 'Sync your saved list across devices and personalize discovery on this browser.', 'ANIVERSE ACCOUNT');
   content.innerHTML += `
     <div class="auth-tabs" role="tablist" aria-label="Account access">
       <button type="button" class="auth-tab" role="tab" aria-selected="${!isRegister}" data-action="auth-mode" data-mode="login">Sign in</button>
@@ -629,7 +758,7 @@ function search(query) {
     return;
   }
   const matches = [...state.catalog.values()]
-    .filter((item) => `${item.title} ${(item.genres || []).join(' ')} ${item.description || ''}`.toLowerCase().includes(clean))
+    .filter((item) => `${item.title} ${(item.alternativeTitles || []).join(' ')} ${(item.genres || []).join(' ')} ${item.description || ''}`.toLowerCase().includes(clean))
     .slice(0, 12);
   if (!matches.length) {
     searchResults.append(element('p', 'search-hint', 'No titles match your search. Try another name or genre.'));
@@ -649,8 +778,8 @@ function showNotificationAction(message) {
   const actions = {
     'Connect this button to your video player': () => openTitle('perfect-world', 'watch'),
     'Added to your list (demo)': () => toggleFavorite('perfect-world'),
-    'Continue watching page': () => showBrowse({ heading: 'Continue watching', filters: { section: 'continue' } }),
-    'More trending titles': () => showBrowse({ heading: 'Trending titles', filters: { section: 'trending' } }),
+    'Continue watching page': () => window.location.assign('/continue-watching'),
+    'More trending titles': () => showBrowse({ heading: 'Featured titles', filters: { section: 'trending' } }),
     'Perfect World selected': () => openTitle('perfect-world'),
     'BTTH selected': () => openTitle('battle-through-the-heavens'),
     'Soul Land selected': () => openTitle('soul-land'),
@@ -660,8 +789,8 @@ function showNotificationAction(message) {
     'Donghua category': () => showBrowse({ heading: 'Popular donghua', filters: { type: 'donghua' } }),
     'Anime category': () => showBrowse({ heading: 'Popular anime', filters: { type: 'anime' } }),
     'All latest episodes': showUpdates,
-    'No new notifications': showUpdates,
-    'Profile page coming soon': showAccount,
+    'No new notifications': showNotifications,
+    'Profile page coming soon': () => window.location.assign('/profile'),
   };
   const action = actions[message];
   if (action) void Promise.resolve(action()).catch((error) => toast(error.message || 'This action could not be completed.'));
@@ -693,6 +822,9 @@ async function handleAction(button) {
       break;
     case 'featured-select':
       renderFeatured(Number(button.dataset.index));
+      break;
+    case 'schedule-day':
+      selectScheduleDay(button.dataset.day);
       break;
     case 'navigate':
       if (button.dataset.path?.startsWith('/')) window.location.assign(button.dataset.path);
@@ -727,7 +859,7 @@ async function handleAction(button) {
       showAuth(button.dataset.mode);
       break;
     case 'browse-section':
-      await showBrowse({ heading: 'Trending titles', filters: { section: button.dataset.section } });
+      await showBrowse({ heading: 'Featured titles', filters: { section: button.dataset.section } });
       break;
     case 'browse-filter': {
       if (!state.browse) break;
@@ -756,7 +888,7 @@ document.addEventListener('click', (event) => {
   if (target.closest('.icon-btn[aria-label="Notifications"]')) {
     event.preventDefault();
     event.stopImmediatePropagation();
-    showNotificationAction('No new notifications');
+    showNotifications();
     return;
   }
   if (target.closest('.close-search')) {
@@ -817,9 +949,16 @@ document.addEventListener('keydown', (event) => {
 });
 
 document.addEventListener('submit', (event) => {
-  if (event.target.id !== 'authForm') return;
-  event.preventDefault();
-  void submitAuth(event.target);
+  if (event.target.id === 'authForm') {
+    event.preventDefault();
+    void submitAuth(event.target);
+  } else if (event.target.id === 'preferencesForm') {
+    event.preventDefault();
+    savePreferencesForm(event.target);
+  } else if (event.target.id === 'discoveryFilters') {
+    event.preventDefault();
+    void loadDiscovery(event.target);
+  }
 });
 
 function enableCardKeyboard() {
@@ -835,14 +974,255 @@ function enableCardKeyboard() {
   }
 }
 
+function discoveryField(labelText, control) {
+  const label = element('label', 'discovery-field');
+  label.append(element('span', '', labelText), control);
+  return label;
+}
+
+function appendSelectField(form, labelText, name, options, selectedValue = '') {
+  const select = element('select', '');
+  select.name = name;
+  select.id = `discovery-${name}`;
+  options.forEach(([value, label]) => {
+    const option = element('option', '', label);
+    option.value = value;
+    select.append(option);
+  });
+  const selected = options.find(([value]) => String(value).toLowerCase() === String(selectedValue).toLowerCase());
+  select.value = selected ? selected[0] : options[0][0];
+  form.append(discoveryField(labelText, select));
+}
+
+function makeDiscoveryForm() {
+  const params = new URLSearchParams(window.location.search);
+  const form = element('form', 'discovery-filters');
+  form.id = 'discoveryFilters';
+  const query = element('input');
+  query.type = 'search';
+  query.name = 'q';
+  query.id = 'discovery-query';
+  query.maxLength = 100;
+  query.autocomplete = 'off';
+  query.value = params.get('q') || '';
+  form.append(discoveryField('Search titles, genres, or descriptions', query));
+
+  const preferredType = state.preferences.preferredType === 'all' ? '' : state.preferences.preferredType;
+  appendSelectField(form, 'Type', 'type', [['', 'All types'], ['anime', 'Anime'], ['donghua', 'Donghua']], params.has('type') ? params.get('type') : preferredType);
+  appendSelectField(form, 'Format', 'format', [['', 'All formats'], ['series', 'Series'], ['movie', 'Movies']], params.get('format') || '');
+  appendSelectField(form, 'Status', 'status', [['', 'Any status'], ['ongoing', 'Ongoing'], ['completed', 'Completed']], params.get('status') || '');
+  const genres = [...new Set([...state.catalog.values()].flatMap((title) => title.genres || []))].sort((left, right) => left.localeCompare(right));
+  appendSelectField(form, 'Genre', 'genre', [['', 'All genres'], ...genres.map((genre) => [genre, genre])], params.get('genre') || '');
+
+  const year = element('input');
+  year.type = 'number';
+  year.name = 'year';
+  year.id = 'discovery-year';
+  year.min = '1900';
+  year.max = '2100';
+  year.step = '1';
+  year.inputMode = 'numeric';
+  const requestedYear = params.get('year') || '';
+  year.value = /^\d{4}$/.test(requestedYear) && Number(requestedYear) >= 1900 && Number(requestedYear) <= 2100 ? requestedYear : '';
+  form.append(discoveryField('Release year', year));
+
+  const submit = element('button', 'dialog-button primary', 'Apply filters');
+  submit.type = 'submit';
+  form.append(submit);
+  return form;
+}
+
+async function loadDiscovery(form) {
+  const results = document.getElementById('discoveryResults');
+  const count = document.getElementById('discoveryCount');
+  if (!results || !count) return;
+  const params = new URLSearchParams({ limit: '48' });
+  const submitted = new FormData(form);
+  for (const key of ['q', 'type', 'format', 'status', 'genre', 'year']) {
+    const value = String(submitted.get(key) || '').trim();
+    if (value) params.set(key, value);
+  }
+  const filters = new URLSearchParams(params);
+  filters.delete('limit');
+  const queryString = filters.toString();
+  window.history.replaceState({}, '', `${window.location.pathname}${queryString ? `?${queryString}` : ''}`);
+
+  const requestId = (state.discoveryRequestId || 0) + 1;
+  state.discoveryRequestId = requestId;
+  results.replaceChildren(element('p', 'dialog-loading', 'Loading catalogue…'));
+  count.textContent = 'Loading results';
+  try {
+    const data = await request(`/api/catalog?${params.toString()}`);
+    if (requestId !== state.discoveryRequestId || !results.isConnected) return;
+    data.items.forEach((title) => state.catalog.set(title.id, title));
+    count.textContent = `${data.total} ${data.total === 1 ? 'title' : 'titles'} found`;
+    results.replaceChildren();
+    if (!data.items.length) {
+      emptyPage(results, 'No titles match these filters. Try changing or clearing a filter.');
+      return;
+    }
+    const grid = element('div', 'cards');
+    data.items.forEach((title, index) => grid.append(createPosterCard(title, index)));
+    results.append(grid);
+  } catch (error) {
+    if (requestId !== state.discoveryRequestId || !results.isConnected) return;
+    count.textContent = 'Catalogue unavailable';
+    emptyPage(results, error.message || 'The catalogue could not be loaded. Please try again.');
+  }
+}
+
+function renderDiscoveryPage(container) {
+  pageHeader(container, 'Discover', 'Filter the catalogue by title, format, status, genre, or release year.');
+  container.append(makeDiscoveryForm());
+  const count = element('p', 'discovery-count', 'Loading results');
+  count.id = 'discoveryCount';
+  count.setAttribute('role', 'status');
+  container.append(count);
+  const results = element('div', 'discovery-results');
+  results.id = 'discoveryResults';
+  container.append(results);
+  void loadDiscovery(document.getElementById('discoveryFilters'));
+}
+
+const scheduleDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+function renderScheduleDay(day) {
+  const container = document.getElementById('scheduleResults');
+  if (!container) return;
+  container.replaceChildren();
+  const entries = [...state.catalog.values()].flatMap((title) =>
+    (title.releaseSchedule || [])
+      .filter((entry) => entry.day.toLowerCase() === day.toLowerCase())
+      .map((entry) => ({ title, entry })),
+  );
+  entries.sort((left, right) => left.entry.time.localeCompare(right.entry.time));
+  if (!entries.length) {
+    emptyPage(container, `No verified weekly releases are listed for ${day}.`);
+    return;
+  }
+  const list = element('div', 'schedule-list');
+  entries.forEach(({ title, entry }) => {
+    const row = element('article', 'schedule-item');
+    const copy = element('div', 'schedule-item-copy');
+    const link = element('a', 'schedule-title', title.title);
+    link.href = `/title/${encodeURIComponent(title.id)}`;
+    copy.append(link);
+    const detail = [entry.time];
+    if (Number.isInteger(entry.episode)) detail.push(`Episode ${entry.episode}`);
+    copy.append(element('p', 'schedule-item-meta', detail.join(' · ')));
+    row.append(copy);
+    list.append(row);
+  });
+  container.append(list);
+}
+
+function selectScheduleDay(day) {
+  if (!scheduleDays.includes(day)) return;
+  state.scheduleDay = day;
+  document.querySelectorAll('.schedule-day').forEach((button) => {
+    button.setAttribute('aria-pressed', String(button.dataset.day === day));
+  });
+  renderScheduleDay(day);
+}
+
+function renderSchedulePage(container) {
+  pageHeader(container, 'Release Schedule', 'Browse weekly releases and dated announcements when verified schedule data is available.');
+  const today = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date());
+  if (!scheduleDays.includes(state.scheduleDay)) state.scheduleDay = today;
+  const dayGroup = element('div', 'schedule-days');
+  dayGroup.setAttribute('role', 'group');
+  dayGroup.setAttribute('aria-label', 'Choose a day of the week');
+  scheduleDays.forEach((day) => {
+    const button = makeButton(day, 'schedule-day', 'schedule-day', { day });
+    button.setAttribute('aria-pressed', String(state.scheduleDay === day));
+    dayGroup.append(button);
+  });
+  container.append(dayGroup);
+  const weeklyHeading = element('h2', 'schedule-subhead', 'Weekly releases');
+  container.append(weeklyHeading);
+  const results = element('div', 'schedule-results');
+  results.id = 'scheduleResults';
+  container.append(results);
+  renderScheduleDay(state.scheduleDay);
+
+  const now = Date.now();
+  const upcoming = [...state.catalog.values()]
+    .filter((title) => Number.isFinite(Date.parse(title.upcomingReleaseAt || '')) && Date.parse(title.upcomingReleaseAt) >= now)
+    .sort((left, right) => Date.parse(left.upcomingReleaseAt) - Date.parse(right.upcomingReleaseAt));
+  if (upcoming.length) {
+    const section = element('section', 'schedule-upcoming');
+    section.append(element('h2', 'schedule-subhead', 'Dated releases'));
+    const list = element('div', 'schedule-list');
+    const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    upcoming.forEach((title) => {
+      const row = element('article', 'schedule-item');
+      const copy = element('div', 'schedule-item-copy');
+      const link = element('a', 'schedule-title', title.title);
+      link.href = `/title/${encodeURIComponent(title.id)}`;
+      copy.append(link, element('p', 'schedule-item-meta', `${dateFormat.format(new Date(title.upcomingReleaseAt))} · Device time zone`));
+      row.append(copy);
+      list.append(row);
+    });
+    section.append(list);
+    container.append(section);
+  }
+}
+
+function makePreferencesForm() {
+  const section = element('section', 'preferences-panel');
+  section.append(element('h2', 'schedule-subhead', 'Discovery preferences'));
+  section.append(element('p', 'route-page-copy', 'Choose the default content filter and motion behavior for this browser.'));
+  const form = element('form', 'preferences-form');
+  form.id = 'preferencesForm';
+  const select = element('select');
+  select.name = 'preferredType';
+  select.id = 'preferredType';
+  [['all', 'All titles'], ['anime', 'Anime'], ['donghua', 'Donghua']].forEach(([value, label]) => {
+    const option = element('option', '', label);
+    option.value = value;
+    select.append(option);
+  });
+  select.value = state.preferences.preferredType;
+  form.append(discoveryField('Default discovery type', select));
+
+  const motionLabel = element('label', 'preference-check');
+  const motion = element('input');
+  motion.type = 'checkbox';
+  motion.name = 'reduceMotion';
+  motion.checked = state.preferences.reduceMotion;
+  motionLabel.append(motion, element('span', '', 'Reduce animations and automatic carousel movement'));
+  form.append(motionLabel);
+  const submit = element('button', 'dialog-button primary', 'Save preferences');
+  submit.type = 'submit';
+  form.append(submit);
+  section.append(form);
+  const status = element('p', 'preferences-status', 'Preferences are stored in this browser only. They are not uploaded or synced with your account.');
+  status.setAttribute('role', 'status');
+  section.append(status);
+  return section;
+}
+
+function savePreferencesForm(form) {
+  const status = form.closest('.preferences-panel')?.querySelector('.preferences-status');
+  const saved = persistPreferences({
+    preferredType: form.elements.namedItem('preferredType')?.value,
+    reduceMotion: form.elements.namedItem('reduceMotion')?.checked,
+  });
+  if (saved) {
+    if (status) status.textContent = 'Preferences saved in this browser only; they are not synced with your account.';
+    toast('Preferences saved.');
+  } else {
+    if (status) status.textContent = 'This browser could not store your preferences. They will not persist after you leave.';
+    toast('Preferences could not be saved in this browser.');
+  }
+}
+
 const pageDefinitions = {
-  '/trending': { title: 'Trending Now', description: 'The titles viewers are watching right now.', filters: { section: 'trending' } },
-  '/updates': { title: 'Latest Updates', description: 'Recently updated anime and donghua titles.', filters: { section: 'updates' } },
-  '/donghua': { title: 'Popular Donghua', description: 'Explore Chinese animation series and films.', filters: { type: 'donghua' } },
-  '/anime': { title: 'Popular Anime', description: 'Browse anime series and movies.', filters: { type: 'anime' } },
-  '/ongoing': { title: 'Ongoing Series', description: 'Follow series with new episodes to come.', filters: { status: 'ongoing' } },
+  '/trending': { title: 'Featured Titles', description: 'A curated catalogue selection. Live popularity rankings are not configured.', filters: { section: 'trending' } },
+  '/donghua': { title: 'Donghua', description: 'Explore Chinese animation series and films in the catalogue.', filters: { type: 'donghua' } },
+  '/anime': { title: 'Anime', description: 'Browse anime series and movies in the catalogue.', filters: { type: 'anime' } },
+  '/ongoing': { title: 'Ongoing Series', description: 'Browse series currently marked as ongoing in the catalogue.', filters: { status: 'ongoing' } },
   '/movies': { title: 'Movies', description: 'Anime and donghua films in the catalogue.', filters: { format: 'movie' } },
-  '/continue-watching': { title: 'Continue Watching', description: 'Pick up where you left off.', filters: { section: 'continue' } },
 };
 
 function normalizedPath() {
@@ -851,8 +1231,12 @@ function normalizedPath() {
 }
 
 function updateActiveNavigation(path) {
+  const discoveryPaths = ['/trending', '/ongoing', '/categories', '/continue-watching'];
+  const activePath = path.startsWith('/genre/') || path.startsWith('/title/') || path.startsWith('/watch/') || discoveryPaths.includes(path)
+    ? '/discover'
+    : path;
   document.querySelectorAll('[data-route]').forEach((link) => {
-    const active = link.dataset.route === path || (path === '/movies' && link.dataset.route === '/anime');
+    const active = link.dataset.route === path || link.dataset.route === activePath;
     link.classList.toggle('active', active);
     if (active) link.setAttribute('aria-current', 'page');
     else link.removeAttribute('aria-current');
@@ -886,6 +1270,107 @@ function slugifyGenre(genre) {
   return genre.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
+function renderTitlePage(container, title) {
+  pageHeader(container, title.title, title.type === 'donghua' ? 'Donghua title details' : 'Anime title details');
+  const layout = element('div', 'title-page-layout');
+  const artwork = element('div', 'title-page-art');
+  if (artworkUrl(title)) appendArtwork(artwork, title, 'title-page-image');
+  else artwork.append(element('span', 'title-page-placeholder', title.title));
+
+  const copy = element('div', 'title-page-copy');
+  const meta = element('div', 'dialog-meta');
+  const facts = [
+    title.type === 'donghua' ? 'Donghua' : 'Anime',
+    title.format === 'movie' ? 'Movie' : 'Series',
+    title.status ? `${title.status[0].toUpperCase()}${title.status.slice(1)}` : '',
+    Number.isInteger(title.year) ? String(title.year) : '',
+    Number.isInteger(title.episodeCount) && title.format !== 'movie' ? `${title.episodeCount} episodes` : '',
+    Number.isFinite(title.rating) ? `★ ${title.rating.toFixed(1)}` : '',
+  ].filter(Boolean);
+  facts.forEach((fact) => meta.append(element('span', 'dialog-chip', fact)));
+  copy.append(meta);
+  copy.append(element('p', 'title-page-description', title.description || 'No verified synopsis is available yet.'));
+
+  if (title.alternativeTitles?.length) copy.append(element('p', 'title-aliases', `Also known as: ${title.alternativeTitles.join(', ')}`));
+  if (title.genres?.length) {
+    const genres = element('div', 'dialog-meta');
+    title.genres.forEach((genre) => {
+      const link = element('a', 'dialog-chip title-genre-link', genre);
+      link.href = `/genre/${encodeURIComponent(slugifyGenre(genre))}`;
+      genres.append(link);
+    });
+    copy.append(genres);
+  }
+  if (title.languages?.length) copy.append(element('p', 'title-info-line', `Audio: ${title.languages.join(', ')}`));
+  if (title.subtitles?.length) copy.append(element('p', 'title-info-line', `Subtitles: ${title.subtitles.join(', ')}`));
+  if (title.latestEpisode) {
+    const summary = latestEpisodeSummary(title);
+    if (summary) copy.append(element('p', 'title-info-line', `Latest verified update: ${summary}`));
+  }
+  if (title.upcomingReleaseAt) {
+    const upcomingFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    copy.append(element('p', 'title-info-line', `Upcoming release: ${upcomingFormat.format(new Date(title.upcomingReleaseAt))} · Device time zone`));
+  }
+  if (title.releaseSchedule?.length) {
+    const schedule = element('div', 'title-schedule');
+    schedule.append(element('h2', 'schedule-subhead', 'Verified weekly schedule'));
+    const list = element('ul');
+    title.releaseSchedule.forEach((entry) => {
+      list.append(element('li', '', `${entry.day} · ${entry.time}${Number.isInteger(entry.episode) ? ` · Episode ${entry.episode}` : ''}`));
+    });
+    schedule.append(list);
+    copy.append(schedule);
+  }
+
+  const note = element('div', 'dialog-note');
+  note.append(element('strong', '', 'Playback is not configured. '));
+  note.append(document.createTextNode('No authorized stream is attached to this title. AniVerse does not host or proxy video.'));
+  copy.append(note);
+  const actions = element('div', 'dialog-actions');
+  actions.append(makeButton('View playback status', 'navigate', 'dialog-button primary', { path: `/watch/${encodeURIComponent(title.id)}` }));
+  actions.append(makeButton(state.favorites.has(title.id) ? '♥ Remove from My List' : '＋ Add to My List', 'toggle-favorite', 'dialog-button', { id: title.id }));
+  copy.append(actions);
+  layout.append(artwork, copy);
+  container.append(layout);
+}
+
+function renderWatchPage(container, title) {
+  pageHeader(container, title.title, 'Playback status');
+  const player = element('section', 'player-page');
+  const hasArtwork = Boolean(artworkUrl(title));
+  player.classList.toggle('has-artwork', hasArtwork);
+  player.setAttribute('aria-label', `Playback availability for ${title.title}`);
+  if (hasArtwork) {
+    const poster = element('div', 'player-page-art');
+    appendArtwork(poster, title, 'player-page-image');
+    player.append(poster);
+  }
+  const status = element('div', 'player-page-status');
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  status.append(element('div', 'player-symbol', '▶'));
+  status.append(element('h2', 'schedule-subhead', 'Playback unavailable'));
+  status.append(element('p', '', 'No authorized video source is configured for this title.'));
+  player.append(status);
+  container.append(player);
+
+  const note = element('div', 'dialog-note player-page-note');
+  note.append(element('strong', '', 'This is not a playable stream. '));
+  note.append(document.createTextNode('AniVerse does not host or proxy video. Playback can be enabled only after an authorized provider source is supplied.'));
+  container.append(note);
+  const actions = element('div', 'dialog-actions');
+  actions.append(makeButton('← Back to title details', 'navigate', 'dialog-button primary', { path: `/title/${encodeURIComponent(title.id)}` }));
+  actions.append(makeButton('Add to My List', 'toggle-favorite', 'dialog-button', { id: title.id }));
+  container.append(actions);
+}
+
+async function loadRoutedTitle(id) {
+  if (state.catalog.has(id)) return state.catalog.get(id);
+  const data = await request(`/api/catalog/${encodeURIComponent(id)}`);
+  state.catalog.set(data.item.id, data.item);
+  return data.item;
+}
+
 async function renderCurrentPage() {
   const path = normalizedPath();
   const home = document.getElementById('home');
@@ -894,7 +1379,7 @@ async function renderCurrentPage() {
   if (path === '/') {
     home.hidden = false;
     page.hidden = true;
-    document.title = 'Anime Donghua — Anime & Donghua';
+    document.title = 'AniVerse — Anime & Donghua';
     return;
   }
 
@@ -907,33 +1392,34 @@ async function renderCurrentPage() {
     const titles = [...state.favorites].map((id) => state.catalog.get(id)).filter(Boolean);
     makePageGrid(page, titles);
     if (!titles.length) {
-      const explore = element('a', 'route-link-button', 'Explore trending titles');
-      explore.href = '/trending';
+      const explore = element('a', 'route-link-button', 'Explore the catalogue');
+      explore.href = '/discover';
       page.append(explore);
     }
-    document.title = 'My List | Anime Donghua';
+    document.title = 'My List | AniVerse';
     return;
   }
 
   if (path === '/profile') {
-    pageHeader(page, 'Profile', 'Manage your Anime Donghua account and saved titles.');
+    pageHeader(page, 'Profile & Preferences', 'Manage your AniVerse account and personalize discovery on this browser.');
     if (state.user) {
       const profile = element('div', 'profile-card route-profile-card');
-      profile.append(element('div', 'profile-name', state.user.displayName || 'Anime Donghua fan'));
+      profile.append(element('div', 'profile-name', state.user.displayName || 'AniVerse fan'));
       profile.append(element('div', 'profile-email', state.user.email || ''));
       profile.append(makeButton(`My List (${state.favorites.size})`, 'navigate', 'dialog-button primary', { path: '/my-list' }));
       profile.append(makeButton('Sign out', 'logout', 'dialog-button'));
       page.append(profile);
     } else {
-      emptyPage(page, 'Sign in to sync your saved titles across devices.');
+      emptyPage(page, 'Sign in to sync your saved list across devices. Preferences below remain local to this browser.');
       page.append(makeButton('Sign in or create an account', 'account', 'dialog-button primary'));
     }
-    document.title = 'Profile | Anime Donghua';
+    page.append(makePreferencesForm());
+    document.title = 'Profile & Preferences | AniVerse';
     return;
   }
 
   if (path === '/categories') {
-    pageHeader(page, 'Browse Categories', 'Choose a genre to find your next series.');
+    pageHeader(page, 'Browse Categories', 'Choose a genre to find your next title.');
     const genres = [...new Set([...state.catalog.values()].flatMap((title) => title.genres || []))].sort((a, b) => a.localeCompare(b));
     const list = element('div', 'category-list');
     genres.forEach((genre) => {
@@ -942,8 +1428,66 @@ async function renderCurrentPage() {
       list.append(link);
     });
     if (genres.length) page.append(list);
-    else emptyPage(page, 'Genres will appear here when the catalogue is available.');
-    document.title = 'Categories | Anime Donghua';
+    else emptyPage(page, 'Genres will appear here when catalogue data is available.');
+    document.title = 'Categories | AniVerse';
+    return;
+  }
+
+  if (path === '/discover') {
+    renderDiscoveryPage(page);
+    document.title = 'Discover | AniVerse';
+    return;
+  }
+
+  if (path === '/schedule') {
+    renderSchedulePage(page);
+    document.title = 'Release Schedule | AniVerse';
+    return;
+  }
+
+  if (path === '/updates') {
+    pageHeader(page, 'Latest Updates', 'Episode updates are shown only when verified metadata is available.');
+    const updates = verifiedUpdateTitles();
+    if (!updates.length) emptyPage(page, 'No verified episode updates are available yet.');
+    else {
+      const list = element('div', 'route-updates');
+      updates.forEach((title) => list.append(makeUpdateCard(title)));
+      page.append(list);
+    }
+    document.title = 'Latest Updates | AniVerse';
+    return;
+  }
+
+  if (path === '/continue-watching') {
+    pageHeader(page, 'Continue Watching', 'Saved playback progress will appear here only after an authorized source is connected.');
+    emptyPage(page, 'No saved playback progress is available. Playback sources are not configured, so AniVerse has not recorded progress.');
+    document.title = 'Continue Watching | AniVerse';
+    return;
+  }
+
+  if (path.startsWith('/title/') || path.startsWith('/watch/')) {
+    const isWatchPage = path.startsWith('/watch/');
+    let id = '';
+    try {
+      id = decodeURIComponent(path.slice(isWatchPage ? '/watch/'.length : '/title/'.length));
+    } catch {
+      id = '';
+    }
+    let title;
+    try {
+      title = id ? await loadRoutedTitle(id) : null;
+    } catch {
+      title = null;
+    }
+    if (!title) {
+      pageHeader(page, 'Title Not Found', 'This title is not available in the current catalogue.');
+      emptyPage(page, 'Return to Discover to browse available titles.');
+      document.title = 'Title Not Found | AniVerse';
+      return;
+    }
+    if (isWatchPage) renderWatchPage(page, title);
+    else renderTitlePage(page, title);
+    document.title = `${title.title} | AniVerse`;
     return;
   }
 
@@ -969,7 +1513,7 @@ async function renderCurrentPage() {
   } catch (error) {
     emptyPage(page, error.message || 'The catalogue could not be loaded. Please try again.');
   }
-  document.title = `${definition.title} | Anime Donghua`;
+  document.title = `${definition.title} | AniVerse`;
 }
 
 async function refreshCatalog() {
@@ -977,6 +1521,7 @@ async function refreshCatalog() {
     const data = await request('/api/catalog?limit=48&sort=newest', { cache: 'no-store' });
     state.catalog = new Map(data.items.map((item) => [item.id, item]));
     renderHomeCollections(data.items);
+    renderHomeUpdates(data.items);
     setFeaturedTitles(data.items);
     if (normalizedPath() !== '/') await renderCurrentPage();
   } catch {
@@ -985,11 +1530,14 @@ async function refreshCatalog() {
 }
 
 async function initialize() {
+  state.preferences = loadPreferences();
+  applyPreferences();
   enableCardKeyboard();
   const catalogTask = request('/api/catalog?limit=48&sort=newest')
     .then((data) => {
       state.catalog = new Map(data.items.map((item) => [item.id, item]));
       renderHomeCollections(data.items);
+      renderHomeUpdates(data.items);
       setFeaturedTitles(data.items);
     })
     .catch(() => {});

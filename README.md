@@ -1,6 +1,6 @@
-# Anime Donghua — anime & donghua discovery
+# AniVerse — anime & donghua discovery
 
-The supplied homepage HTML structure and original styling are preserved. The visible brand is now **Anime Donghua**; a separate stylesheet and script add search, title details, category filters, a guest/account My List, sign-in and registration, latest updates, and a safe player state ready for an authorized provider without rearranging the page. The catalogue and artwork are lightweight and local; no remote image/font requests are needed.
+The existing homepage structure, Express API, authentication, data stores, and vanilla-JavaScript architecture are preserved. AniVerse adds the requested dark palette and supplied blue-dragon hero art, responsive discovery filters, schedule and title-detail pages, a playback-status view, guest/account My List, and browser-local discovery/reduced-motion preferences. Episode updates, release times, ratings, episode counts, and viewing progress appear only when corresponding metadata exists; the seed catalogue does not invent those values. Artwork is local, with no remote image or font requests.
 
 ## Run locally
 
@@ -56,10 +56,10 @@ Use a dedicated database user with a strong password, keep TLS enabled, and limi
 
 ### Important scraping limitation
 
-Encryption cannot stop someone from copying public content that their browser must receive. Anime Donghua applies rate limits and server-side bounds as friction, but this is not a guarantee against scraping, bots, screenshots, or a distributed client. Do not put private catalogue records, credentials, or unreleased media in the public frontend/API. Real video protection requires authorized source integration and access control; signed, short-lived stream URLs and a licensed DRM/provider workflow can raise the bar but cannot make rendered content impossible to capture.
+Encryption cannot stop someone from copying public content that their browser must receive. AniVerse applies rate limits and server-side bounds as friction, but this is not a guarantee against scraping, bots, screenshots, or a distributed client. Do not put private catalogue records, credentials, or unreleased media in the public frontend/API. Real video protection requires authorized source integration and access control; signed, short-lived stream URLs and a licensed DRM/provider workflow can raise the bar but cannot make rendered content impossible to capture.
 
 ## Catalogue and streaming
 
-The initial catalogue is sample metadata based on the supplied homepage. Update `src/catalog.js` when you provide the final catalogue. The homepage cards remain present immediately so the supplied design renders without waiting for JavaScript; interactions use the same catalogue through `/api/catalog`.
+The initial catalogue is sample metadata based on the supplied homepage. Update `src/catalog.js` when you provide a final, verified catalogue. The homepage cards remain present immediately so the layout renders without waiting for JavaScript; discovery, title details, and schedule views use the existing `/api/catalog` data. Optional schedule, language, year, episode, and rating metadata is sanitized before becoming public.
 
-The player dialog is intentionally **not** a pirate stream or fake playable video: no licensed provider/stream URLs were supplied. It explains that playback is not configured yet. Add your authorized provider details and desired features in a later step; never put provider credentials in client-side JavaScript.
+The playback-status view is intentionally **not** a pirate stream or a fake playable video: no authorized provider URLs were supplied. It clearly reports that playback is unavailable and does not embed a video. The schedule and latest-updates views show empty states until verified data is added. Add authorized source details only when provided; never put provider credentials in client-side JavaScript. Discovery and reduced-motion preferences are saved in the current browser's local storage and are not synced to the user account.

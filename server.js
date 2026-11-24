@@ -8,7 +8,7 @@ async function start() {
   const store = await createStore(config);
   const app = createApp({ store, config });
   const server = app.listen(config.port, '0.0.0.0', () => {
-    console.log(`Anime Donghua listening on 0.0.0.0:${config.port} (${config.nodeEnv})`);
+    console.log(`AniVerse listening on 0.0.0.0:${config.port} (${config.nodeEnv})`);
   });
 
   server.requestTimeout = 20_000;
