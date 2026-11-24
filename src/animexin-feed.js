@@ -10,8 +10,16 @@ const releaseFailureTtlMs = 60 * 1000;
 const maxReleaseCacheEntries = 12;
 
 const ALLOWED_PLAYER_HOSTS = ['dailymotion.com', 'dai.ly', 'rumble.com'];
-const NON_ENGLISH_LABEL = /\b(?:indonesia|indonesian|indo|malay|melayu|hindi|tagalog|thai|vietnam|vietnamese|spanish|latino|portuguese|arabic|japanese|korean|chinese|mandarin)\b/i;
+// "ID" is the two-letter Indonesian code Animexin uses in server names, and a
+// bare "Rumble"/"Dailymotion" label names no language at all — both are handled
+// around this pattern rather than by it.
+const NON_ENGLISH_LABEL = /\b(?:indonesia|indonesian|indo|id|malay|melayu|hindi|tagalog|thai|vietnam|vietnamese|spanish|latino|portuguese|arabic|japanese|korean|chinese|mandarin)\b/i;
 const ENGLISH_LABEL = /\benglish\b/i;
+
+// An episode page title always carries an episode number; a nav link never does.
+const EPISODE_TITLE = /\b(?:episode|ep\.?|episode-)\s*0*\d{1,4}\b|\bepisode\s*\d+\b/i;
+// Wording that belongs to a theme menu, not a release.
+const MENU_LABEL = /^(?:home|genres?|release date|release-date|schedule|anime list|anime-list|series list|ongoing|completed|movies?|dub|sub|search|about|contact|privacy|disclaimer|dmca|request|report|login|register|animexin list)\b/i;
 
 const cache = new Map();
 
@@ -79,7 +87,11 @@ function safeImageUrl(value, baseUrl) {
   if (url.protocol !== 'https:' || url.username || url.password || url.port) return null;
   const host = url.hostname.toLowerCase();
   const configuredHost = new URL(baseUrl).hostname.toLowerCase();
-  const allowedHosts = ['animexin.dev', 'animexin.vip', 'animexin.xyz', 'animexin.top', 'animexinax.com', 'i.ibb.co', configuredHost];
+  // i0.wp.com and the other Jetpack/WordPress CDNs are where Animexin's own
+  // featured images actually live; excluding them is why posts arrived with no
+  // poster at all.
+  const allowedHosts = ['animexin.dev', 'animexin.vip', 'animexin.xyz', 'animexin.top', 'animexinax.com', 'i.ibb.co',
+    'i0.wp.com', 'i1.wp.com', 'i2.wp.com', 'i3.wp.com', 'wp.com', 'gravatar.com', configuredHost];
   if (!allowedHosts.some((allowed) => host === allowed || host.endsWith(`.${allowed}`))) return null;
   return url.href;
 }
@@ -175,9 +187,12 @@ export function parseAnimexinHomepage(html, baseUrl) {
   for (const anchor of anchors) {
     const href = attribute(anchor, 'href');
     const pageUrl = href ? safeAnimexinUrl(href, baseUrl) : null;
-    if (!pageUrl || pageUrl.pathname === '/' || /^\/(?:category|tag|page|feed|wp-|author)/i.test(pageUrl.pathname)) continue;
+    if (!pageUrl || pageUrl.pathname === '/' || /^\/(?:category|tag|page|feed|wp-|author|genre|release|schedule|list|movie|dub|type|year|status|search|login|register|dmca|about|contact|privacy|disclaimer|request|report|donate|bookmark|anime-list|series-list|ongoing|completed)/i.test(pageUrl.pathname)) continue;
     const title = cleanText(anchor, 200);
     if (!title || title.length < 3 || seen.has(pageUrl.href)) continue;
+    // A menu link ("Genres", "Release Date") is not an episode. The first pass
+    // used to publish those as posts with an empty genre list and no artwork.
+    if (!EPISODE_TITLE.test(title) || MENU_LABEL.test(title)) continue;
     seen.add(pageUrl.href);
     releases.push({ title, pageUrl: pageUrl.href, guid: pageUrl.href, publishedAt: null });
   }
@@ -342,8 +357,15 @@ export function parseAnimexinRelease(html, pageUrl) {
   };
 
   const servers = parseAnimexinServers(html, baseUrl);
+  // Language is decided per server, and a server that names no language inherits
+  // the page's: Animexin labels its English releases "… English Sub", so a
+  // Dailymotion/Rumble server listed there is English. Requiring the word
+  // "English" in every label silently dropped the Rumble players that Animexin
+  // names just "Rumble", which is why only Dailymotion ever appeared.
+  const pageIsEnglish = !NON_ENGLISH_LABEL.test(rawTitle) && !NON_ENGLISH_LABEL.test(seriesFromTitle(rawTitle));
   for (const server of servers) {
-    if (!englishLabelAllowed(server.name)) continue;
+    if (NON_ENGLISH_LABEL.test(server.name)) continue;
+    if (!ENGLISH_LABEL.test(server.name) && !pageIsEnglish) continue;
     push(playerEntry(server.url, server.name, baseUrl));
   }
   if (!servers.length) {

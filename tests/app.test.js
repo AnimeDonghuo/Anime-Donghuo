@@ -61,8 +61,8 @@ test('health, readiness, and homepage are served safely', async () => {
   const heroAsset = await fetch(`${baseUrl}/assets/anime-donghua-blue-dragon.png`);
   assert.equal(heroAsset.status, 200);
   assert.match(heroAsset.headers.get('content-type'), /image\/png/);
-  assert.match(homeHtml, /app\.css\?v=anime-donghua-v5/);
-  assert.match(homeHtml, /app\.js\?v=anime-donghua-v5/);
+  assert.match(homeHtml, /app\.css\?v=anime-donghua-v6/);
+  assert.match(homeHtml, /app\.js\?v=anime-donghua-v6/);
   assert.match(homeResponse.headers.get('content-security-policy'), /img-src[^;]*https:\/\/i\.ibb\.co/);
   assert.match(homeResponse.headers.get('content-security-policy'), /frame-src[^;]*https:\/\/.*dailymotion\.com/);
   assert.match(homeResponse.headers.get('content-security-policy'), /frame-src[^;]*https:\/\/.*rumble\.com/);

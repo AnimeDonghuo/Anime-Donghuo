@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { checkAnimexin, checkAnimexinReport } from '../src/animexin-check.js';
+import { checkAnimexin, checkAnimexinReport, isJunkCard } from '../src/animexin-check.js';
 import { MemoryStore } from '../src/stores/memory-store.js';
 import { MemoryCatalogRepository } from '../src/server/catalog.repository.js';
 import { clearAnimexinReleaseCache } from '../src/animexin-feed.js';
@@ -181,4 +181,77 @@ test('/checkanimexin reports releases it cannot publish and stays a no-op when d
   const disabled = await checkAnimexin({ config: baseConfig({ animexinEnabled: false }), store, repository, fetchImpl: stubFetch(pages) });
   assert.equal(disabled.enabled, false);
   assert.match(checkAnimexinReport(disabled), /disabled/);
+});
+
+test('/checkanimexin removes non-episode menu cards and mirrors the poster', async () => {
+  clearAnimexinReleaseCache();
+  const store = new MemoryStore();
+  const repository = new MemoryCatalogRepository([]);
+  await repository.init();
+  // The menu cards an earlier homepage scan published, plus a real post with no artwork.
+  const genreCard = await repository.createContent({ title: 'Genres', category: 'donghua', published: true, description: '', files: [] });
+  const dateCard = await repository.createContent({ title: 'Release Date', category: 'donghua', published: true, description: '', files: [] });
+  const realCard = await repository.createContent({
+    title: 'Swallowed Star Season 5 Episode 191',
+    category: 'donghua',
+    published: true,
+    description: 'x',
+    files: [],
+    posterUrl: null,
+  });
+  assert.equal(isJunkCard(genreCard), true);
+  assert.equal(isJunkCard(dateCard), true);
+  assert.equal(isJunkCard(realCard), false);
+
+  const items = [release('https://animexin.dev/swallowed-star-season-5-episode-191/', 'Swallowed Star', 191)];
+  const png = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8cfc000000301010018dd8db00000000049454e44ae426082', 'hex');
+  const pages = {
+    feed: feedHtml(items),
+    byUrl: new Map([
+      [
+        items[0].pageUrl,
+        `<html><head><meta property="og:image" content="https://i0.wp.com/animexin.dev/ss191.jpg"></head><body>
+        <h1>Swallowed Star Episode 191 English Sub</h1>
+        <div class="player-options">
+          <button class="player-option" data-src="https://www.dailymotion.com/video/x8e191" data-name="Hardsub English Dailymotion AX">A</button>
+          <button class="player-option" data-src="https://rumble.com/v6abc12.html" data-name="Rumble">B</button>
+        </div></body></html>`,
+      ],
+    ]),
+  };
+  const base = stubFetch(pages);
+  const fetchImpl = async (url) => {
+    const target = String(url);
+    if (new URL(target).hostname === 'api.imgbb.com') {
+      return new Response(JSON.stringify({ success: true, data: { url: 'https://i.ibb.co/hosted/ss191.png' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (target.includes('i0.wp.com')) {
+      return new Response(png, { status: 200, headers: { 'content-type': 'image/png', 'content-length': String(png.length) } });
+    }
+    return base(url);
+  };
+
+  const result = await checkAnimexin({
+    config: baseConfig({ imgbbApiKey: 'test-key' }),
+    store,
+    repository,
+    fetchImpl,
+  });
+
+  assert.deepEqual(result.removed.map((entry) => entry.title).sort(), ['Genres', 'Release Date']);
+  assert.equal(result.updated.length, 1);
+  assert.equal(result.updated[0].adminId, realCard.adminId);
+  assert.equal(result.updated[0].players, 2, 'both Dailymotion and Rumble are attached');
+
+  const rows = await repository.listContent({ limit: 20 });
+  assert.deepEqual(rows.map((row) => row.title), ['Swallowed Star Season 5 Episode 191']);
+  const saved = await repository.findContentByAdminId(realCard.adminId);
+  assert.equal(saved.posterUrl, 'https://i.ibb.co/hosted/ss191.png', 'the scraped image is re-hosted on ImgBB');
+  assert.equal(saved.stream.entries.length, 2);
+
+  const report = checkAnimexinReport(result);
+  assert.match(report, /Removed 2 non-episode cards/);
 });

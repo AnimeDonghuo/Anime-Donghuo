@@ -248,15 +248,28 @@ function renderFeatured(index = state.featuredIndex) {
 }
 
 function setFeaturedTitles(items) {
-  const next = (Array.isArray(items) ? items : []).slice(0, 5);
+  // A post published through the bot is the newest thing on the site: it leads the
+  // hero rotation instead of waiting behind the static catalogue's order.
+  const ordered = [...(Array.isArray(items) ? items : [])].sort((left, right) => {
+    const rank = (item) => (item.source === 'publisher' ? 1 : 0);
+    if (rank(left) !== rank(right)) return rank(right) - rank(left);
+    return (Date.parse(right.addedAt || '') || 0) - (Date.parse(left.addedAt || '') || 0);
+  });
+  const next = ordered.slice(0, 5);
   if (!next.length) return;
   const signature = JSON.stringify(next.map((item) => [item.id, item.title, item.addedAt, item.imageUrl, item.rating]));
   if (signature === state.featuredSignature) return;
   const activeId = state.featured[state.featuredIndex]?.id;
   state.featured = next;
   state.featuredSignature = signature;
+  // Follow the newest post when it changes (a publish or an artwork backfill),
+  // unless the visitor deliberately picked another dot.
   const activeIndex = next.findIndex((item) => item.id === activeId);
-  renderFeatured(activeIndex >= 0 ? activeIndex : 0);
+  const newest = next[0];
+  const newestChanged = newest && newest.id !== state.featuredNewestId;
+  state.featuredNewestId = newest?.id || null;
+  const target = newestChanged || activeIndex < 0 ? 0 : activeIndex;
+  renderFeatured(target);
   startFeaturedRotation();
 }
 
@@ -331,7 +344,8 @@ function normalizedPlayerEntries(title) {
       if (embed.protocol !== 'https:' || watch.protocol !== 'https:' || !provider
         || providerFor(embed.hostname.toLowerCase()) !== provider || embed.username || embed.password || embed.port
         || watch.username || watch.password || watch.port) return [];
-      return [{ provider, embedUrl: embed.href, watchUrl: watch.href }];
+      const label = typeof entry?.label === 'string' && entry.label.trim() ? entry.label.trim().slice(0, 80) : '';
+      return [{ provider, label, embedUrl: embed.href, watchUrl: watch.href }];
     } catch {
       return [];
     }
@@ -345,7 +359,12 @@ function appendAuthorizedPlayers(container, title) {
   list.setAttribute('aria-label', `${title.title} authorized video players`);
   entries.forEach((entry, index) => {
     const card = element('article', 'stream-player-card');
-    card.append(element('h3', 'stream-player-heading', `${entry.provider} player${entries.length > 1 ? ` ${index + 1}` : ''}`));
+    // Name the server when the publisher labelled it, so two Dailymotion sources
+    // are distinguishable at a glance.
+    const heading = entry.label && entry.label.toLowerCase() !== entry.provider.toLowerCase()
+      ? `${entry.provider} · ${entry.label}`
+      : `${entry.provider} player${entries.length > 1 ? ` ${index + 1}` : ''}`;
+    card.append(element('h3', 'stream-player-heading', heading));
     const frame = document.createElement('iframe');
     frame.src = entry.embedUrl;
     frame.title = `${entry.provider} video player for ${title.title}`;
@@ -1642,7 +1661,8 @@ function releaseArtwork(release) {
     const url = new URL(release.thumbnailUrl);
     if (url.protocol !== 'https:' || url.username || url.password || url.port) return null;
     const host = url.hostname.toLowerCase();
-    const allowed = ['i.ibb.co', 'animexin.dev', 'animexin.vip', 'animexin.xyz', 'animexin.top', 'animexinax.com'];
+    const allowed = ['i.ibb.co', 'i0.wp.com', 'i1.wp.com', 'i2.wp.com', 'i3.wp.com', 'wp.com',
+      'animexin.dev', 'animexin.vip', 'animexin.xyz', 'animexin.top', 'animexinax.com'];
     const looksLikeAnimexin = allowed.some((entry) => host === entry || host.endsWith(`.${entry}`));
     return looksLikeAnimexin ? url.href : null;
   } catch {
@@ -1740,13 +1760,21 @@ async function renderReleasePage(page, id) {
   const header = element('div', 'release-page-head');
   const art = element('div', 'release-art release-page-art');
   const image = releaseArtwork(release);
+  const placeholder = () => {
+    if (art.querySelector('.release-art-fallback')) return;
+    art.classList.remove('has-artwork');
+    art.append(element('span', 'release-art-fallback', release.series || release.title));
+  };
   if (image) {
     const img = element('img', 'release-thumb');
     img.src = image;
     img.alt = '';
     img.decoding = 'async';
+    img.addEventListener('error', () => { img.remove(); placeholder(); }, { once: true });
     art.append(img);
     art.classList.add('has-artwork');
+  } else {
+    placeholder();
   }
   header.append(art);
   const copy = element('div', 'release-page-copy');

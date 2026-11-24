@@ -63,7 +63,8 @@ function publicImage(value, config) {
     if (url.protocol !== 'https:' || url.username || url.password || url.port) return undefined;
     const host = url.hostname.toLowerCase();
     const configured = new URL(config.animexinBaseUrl).hostname.toLowerCase();
-    const allowed = ['animexin.dev', 'animexin.vip', 'animexin.xyz', 'animexin.top', 'animexinax.com', 'i.ibb.co', configured];
+    const allowed = ['animexin.dev', 'animexin.vip', 'animexin.xyz', 'animexin.top', 'animexinax.com', 'i.ibb.co',
+      'i0.wp.com', 'i1.wp.com', 'i2.wp.com', 'i3.wp.com', 'wp.com', configured];
     return allowed.some((entry) => host === entry || host.endsWith(`.${entry}`)) ? url.href : undefined;
   } catch {
     return undefined;

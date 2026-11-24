@@ -89,7 +89,9 @@ New episodes are also mirrored into the publisher catalog automatically: each En
 
 Admins can review and extend the list from a private chat with the bot: `/releases` refreshes and prints the current release IDs with their English player counts, and `/releasedownload <release-id> <https://www.mediafire.com/file/...>` attaches an authorized MediaFire file you own or may distribute. Admin-added downloads survive later refreshes; scraped MediaFire links are shown only when the release page itself links them.
 
-`/checkanimexin` runs that reconciliation on demand instead of waiting for the schedule: it reads the feed, every release page, attaches the approved English Dailymotion/Rumble players to a post that already exists for the episode (no duplicate card), and publishes any episode that has no post yet. It replies with the Post IDs and the `/donghua/<slug>` page it created or updated.
+Artwork comes from the release page's own featured image (including the Jetpack/WordPress CDN Animexin serves it from) and is re-hosted on ImgBB, so every post has a poster that stays up; when ImgBB is not configured the scraped URL is used as-is.
+
+`/checkanimexin` runs that reconciliation on demand instead of waiting for the schedule: it reads the feed, every release page, attaches the approved English Dailymotion/Rumble players to a post that already exists for the episode (no duplicate card), and publishes any episode that has no post yet. It replies with the Post IDs and the `/donghua/<slug>` page it created or updated, and it removes the non-episode cards an early homepage scan could publish (theme-menu entries such as "Genres" or "Release Date") together with any duplicate episode card.
 
 The home page is rendered from the live catalogue. `/api/catalog` supplies the hero, the Featured/Donghua/Anime shelves, and the latest-posts row, so a post published through the bot appears there on the next refresh without a redeploy. Only `anime` and `donghua` (plus their movie formats) are exposed, and an unpublished draft is never served — not in a shelf, not by slug, and not by Post ID.
 

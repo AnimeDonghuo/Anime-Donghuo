@@ -113,3 +113,10 @@ test('an unpublished draft is not public and the home shells stay dynamic', asyn
     assert.match(home, new RegExp(`data-shelf="${shelf}"`), `${shelf} is filled by the client`);
   }
 });
+
+test('the newest published post leads the catalogue and the hero rotation', async () => {
+  const listing = await (await fetch(`${baseUrl}/api/catalog?limit=48&sort=newest`)).json();
+  const first = listing.items[0];
+  assert.equal(first.publisherAdminId, published.adminId, 'a fresh post is not buried under the static catalogue');
+  assert.ok(first.imageUrl, 'the post reaches the hero with artwork');
+});

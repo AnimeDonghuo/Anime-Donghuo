@@ -4,6 +4,7 @@ import {
   clearAnimexinReleaseCache,
   createAnimexinReleaseFeed,
   parseAnimexinFeed,
+  parseAnimexinHomepage,
   parseAnimexinRelease,
   parseAnimexinServers,
 } from '../src/animexin-feed.js';
@@ -164,4 +165,46 @@ test('public release serialization refuses non-approved embeds and downloads', (
   assert.equal(published.downloads.length, 2);
   assert.equal('thumbnailUrl' in published, false);
   assert.equal(published.playerCount, 1);
+});
+
+test('menu links on the homepage fallback never become release candidates', () => {
+  const navHtml = `<html><body><nav>
+    <a href="https://animexin.dev/genres/">Genres</a>
+    <a href="https://animexin.dev/release-date/">Release Date</a>
+    <a href="https://animexin.dev/animexin-list/">Animexin List</a>
+  </nav>
+  <div class="post"><a href="https://animexin.dev/swallowed-star-season-5-episode-191/">Swallowed Star Season 5 Episode 191 English Sub</a></div>
+  </body></html>`;
+  const entries = parseAnimexinHomepage(navHtml, 'https://animexin.dev');
+  assert.deepEqual(entries.map((entry) => entry.title), ['Swallowed Star Season 5 Episode 191 English Sub']);
+});
+
+test('an unlabelled Rumble server on an English page is kept, other languages are not', () => {
+  // Animexin names some servers just "Rumble" / "Dailymotion"; requiring the word
+  // "English" in every label is why Rumble never reached the site.
+  const page = `<h1>Swallowed Star Season 5 Episode 191 English Sub</h1>
+  <div class="player-options">
+    <button class="player-option" data-src="https://www.dailymotion.com/video/x8e191" data-name="Hardsub English Dailymotion AX">A</button>
+    <button class="player-option" data-src="https://rumble.com/v6abc12-ss191.html" data-name="Rumble">B</button>
+    <button class="player-option" data-src="https://www.dailymotion.com/video/x8indo" data-name="Dailymotion ID">C</button>
+    <button class="player-option" data-src="https://rumble.com/v6indo.html" data-name="Rumble Indonesia">D</button>
+    <button class="player-option" data-src="https://odysee.com/@x:1/e" data-name="Odysee English">E</button>
+  </div>`;
+  const release = parseAnimexinRelease(page, 'https://animexin.dev/swallowed-star-season-5-episode-191/');
+  assert.deepEqual(release.players.map((player) => player.provider), ['Dailymotion', 'Rumble']);
+  assert.equal(release.players[1].embedUrl, 'https://rumble.com/embed/v6abc12/');
+
+  // On an Indonesian page an unlabelled server must not be assumed English.
+  const indo = parseAnimexinRelease(
+    page.replace('Episode 191 English Sub', 'Episode 191 Indonesia Sub'),
+    'https://animexin.dev/swallowed-star-season-5-episode-191/',
+  );
+  assert.deepEqual(indo.players.map((player) => player.label), ['Hardsub English Dailymotion AX']);
+});
+
+test('artwork is read from the Jetpack CDN Animexin actually serves', () => {
+  const page = `<html><head><meta property="og:image" content="https://i0.wp.com/animexin.dev/wp-content/uploads/2026/11/ss191.jpg?resize=750%2C400&ssl=1"></head>
+  <body><h1>Swallowed Star Season 5 Episode 191 English Sub</h1></body></html>`;
+  const release = parseAnimexinRelease(page, 'https://animexin.dev/swallowed-star-season-5-episode-191/');
+  assert.equal(release.thumbnailUrl, 'https://i0.wp.com/animexin.dev/wp-content/uploads/2026/11/ss191.jpg?resize=750%2C400&ssl=1');
 });

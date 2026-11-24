@@ -141,6 +141,16 @@ export class MemoryStore {
     return structuredClone(release);
   }
 
+  /** Forget a mirror that no longer exists on the site (a removed non-episode card). */
+  async forgetAnimexinReleasePublication(id) {
+    const release = this.#releases.get(String(id));
+    if (!release) return null;
+    release.publishedAdminId = null;
+    release.publishedSlug = null;
+    release.updatedAt = new Date();
+    return structuredClone(release);
+  }
+
   async addAnimexinReleaseDownload(id, download) {
     const release = this.#releases.get(String(id));
     if (!release) return null;

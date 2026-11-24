@@ -1,5 +1,6 @@
 import { announcePublishedContent } from './server/services/telegram-bot.js';
 import { getContentPageUrl } from './server/config.js';
+import { resolveReleasePoster } from './animexin-posters.js';
 
 const MAX_PER_RUN = 6;
 
@@ -36,7 +37,7 @@ function releaseStream(release) {
  * channel post. A release is published once: its Post ID is stored on the release
  * row, so a later refresh updates the same card instead of creating a duplicate.
  */
-export async function publishNewReleases({ store, repository, bot = null, config, limit = MAX_PER_RUN } = {}) {
+export async function publishNewReleases({ store, repository, bot = null, config, limit = MAX_PER_RUN, fetchImpl = fetch } = {}) {
   if (!store || !repository || !config?.animexinEnabled) return { published: [], skipped: 0 };
   if (typeof repository.createContent !== 'function') return { published: [], skipped: 0 };
 
@@ -56,6 +57,12 @@ export async function publishNewReleases({ store, repository, bot = null, config
       : null;
     let created = false;
 
+    // The scraped thumbnail is an Animexin/Jetpack URL that may vanish; every post
+    // gets its own ImgBB copy so the card, the channel post and the hero all have
+    // artwork that stays up.
+    const poster = await resolveReleasePoster({ release, config, fetchImpl }).catch(() => null);
+    const posterUrl = poster?.posterUrl || release.thumbnailUrl || null;
+
     if (!content) {
       const input = {
         title: releaseTitle(release),
@@ -67,8 +74,8 @@ export async function publishNewReleases({ store, repository, bot = null, config
         genres: [],
         status: 'Ongoing',
         releaseLabel: Number.isInteger(release.episode) ? `Episode ${release.episode}` : 'Latest episode',
-        posterUrl: release.thumbnailUrl || null,
-        backdropUrl: release.thumbnailUrl || null,
+        posterUrl,
+        backdropUrl: posterUrl,
         metadataProvider: 'animexin',
         stream,
         files: [],
@@ -92,6 +99,17 @@ export async function publishNewReleases({ store, repository, bot = null, config
       // Keep the player list current on an already-published episode.
       if (typeof repository.updateContentStreamByAdminId === 'function') {
         await repository.updateContentStreamByAdminId(content.adminId, stream).catch(() => {});
+      }
+      // A card published before artwork was mirrored is repaired here rather than
+      // being left with the broken image the visitor saw.
+      const hasPoster = Boolean(content.posterUrl);
+      const hasHostedPoster = typeof content.posterUrl === 'string' && /^https:\/\/i\.ibb\.co\//.test(content.posterUrl);
+      if (posterUrl && (!hasPoster || (!hasHostedPoster && poster?.hosted)) && typeof repository.updateContentByAdminId === 'function') {
+        await repository.updateContentByAdminId(content.adminId, {
+          posterUrl,
+          backdropUrl: posterUrl,
+        }).catch(() => {});
+        content = { ...content, posterUrl, backdropUrl: posterUrl };
       }
       if (Number.isInteger(release.episode) && typeof repository.updateContentByAdminId === 'function') {
         await repository.updateContentByAdminId(content.adminId, {

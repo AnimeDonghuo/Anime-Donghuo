@@ -107,6 +107,13 @@ function resolvePosterKeys() {
   return posterKeyPool.list;
 }
 
+/** True when at least one ImgBB key is configured for this deployment. */
+export function posterHostingConfigured(config = null) {
+  if (Array.isArray(config?.imgbbApiKeys) && config.imgbbApiKeys.length) return true;
+  if (config?.imgbbApiKey) return true;
+  return resolvePosterKeys().length > 0;
+}
+
 export function maskApiKey(key) {
   const str = String(key || '').trim();
   if (!str) return 'none';
@@ -400,7 +407,7 @@ async function readResponseBody(response) {
   return Buffer.concat(chunks, total);
 }
 
-async function downloadSinglePosterUrl(sourceUrl) {
+async function downloadSinglePosterUrl(sourceUrl, fetchImpl = fetch) {
   let currentUrl = String(sourceUrl || '').trim();
   if (/^http:\/\//i.test(currentUrl)) {
     currentUrl = currentUrl.replace(/^http:\/\//i, 'https://');
@@ -409,7 +416,7 @@ async function downloadSinglePosterUrl(sourceUrl) {
     const safeUrl = await assertPublicImageUrl(currentUrl);
     let response;
     try {
-      response = await fetch(safeUrl, {
+      response = await fetchImpl(safeUrl, {
         redirect: 'manual',
         signal: AbortSignal.timeout(12_000),
         headers: {
@@ -464,15 +471,15 @@ function buildPosterDownloadFallbacks(sourceUrl) {
   return candidates;
 }
 
-export async function downloadPosterImage(sourceUrl) {
+export async function downloadPosterImage(sourceUrl, fetchImpl = fetch) {
   const candidates = buildPosterDownloadFallbacks(sourceUrl);
   if (!candidates.length) {
-    return downloadSinglePosterUrl(sourceUrl);
+    return downloadSinglePosterUrl(sourceUrl, fetchImpl);
   }
   let lastError = null;
   for (const candidate of candidates) {
     try {
-      return await downloadSinglePosterUrl(candidate);
+      return await downloadSinglePosterUrl(candidate, fetchImpl);
     } catch (error) {
       lastError = error;
     }
@@ -747,7 +754,7 @@ export function createFallbackPosterPng(title, category) {
  * rate-limited host can be retried later with the same image in hand, without asking the publisher
  * to re-send anything.
  */
-export async function preparePosterImage({ sourceUrl = null, fallbackUrls = [], sourceIsManual = false, title, category } = {}) {
+export async function preparePosterImage({ sourceUrl = null, fallbackUrls = [], sourceIsManual = false, title, category, fetchImpl = fetch } = {}) {
   let image = null;
   let originalUrl = null;
   let usedFallback = false;
@@ -762,7 +769,7 @@ export async function preparePosterImage({ sourceUrl = null, fallbackUrls = [], 
     let lastError = null;
     for (const candidateUrl of uniqueUrls) {
       try {
-        image = await downloadPosterImage(candidateUrl);
+        image = await downloadPosterImage(candidateUrl, fetchImpl);
         originalUrl = image.sourceUrl;
         lastError = null;
         break;
@@ -830,7 +837,7 @@ export async function testPosterApiKey(key) {
 }
 
 /** One upload with one key. A limit is an outcome, any other refusal is an error. */
-async function postPosterToImgBB({ buffer, title, key }) {
+async function postPosterToImgBB({ buffer, title, key, fetchImpl = fetch }) {
   const form = new FormData();
   form.set('key', key);
   form.set('name', `${slugify(title).slice(0, 56)}-poster`);
@@ -838,7 +845,7 @@ async function postPosterToImgBB({ buffer, title, key }) {
 
   let response;
   try {
-    response = await fetch(IMGBB_UPLOAD_URL, {
+    response = await fetchImpl(IMGBB_UPLOAD_URL, {
       method: 'POST',
       body: form,
       signal: AbortSignal.timeout(30_000)
@@ -877,7 +884,7 @@ async function postPosterToImgBB({ buffer, title, key }) {
  * cooling, a short remaining wait is taken inside this call; anything longer is reported as a rate
  * limit, which is what lets the caller publish the card and re-host the artwork later.
  */
-export async function uploadImageToImgBB({ buffer, title, apiKey = null, apiKeys = null, repository = null } = {}) {
+export async function uploadImageToImgBB({ buffer, title, apiKey = null, apiKeys = null, repository = null, fetchImpl = fetch } = {}) {
   let keys;
   if (Array.isArray(posterKeyPool.list) && posterKeyPool.list.length > 0) {
     keys = posterKeyPool.list;
@@ -964,7 +971,7 @@ export async function uploadImageToImgBB({ buffer, title, apiKey = null, apiKeys
 
     let outcome = null;
     try {
-      outcome = await postPosterToImgBB({ buffer, title, key: picked.key });
+      outcome = await postPosterToImgBB({ buffer, title, key: picked.key, fetchImpl });
     } catch (error) {
       if (!isPosterRateLimit(error)) throw error;
       coolPosterKey(picked.key, backoffMs * attempt);
@@ -1012,7 +1019,7 @@ export async function uploadImageToImgBB({ buffer, title, apiKey = null, apiKeys
  * Host an already-prepared image. Split out of `mirrorPosterToImgBB` so a publish that must not be
  * lost can keep the artwork it already has and hand this call to a retry queue instead.
  */
-export async function hostPosterImage({ image, title, config, repository = null } = {}) {
+export async function hostPosterImage({ image, title, config, repository = null, fetchImpl = fetch } = {}) {
   if (!image?.buffer) throw new PosterHostingError('There was no poster image to upload.');
 
   if (image.isNoImageFallback) {
@@ -1038,7 +1045,8 @@ export async function hostPosterImage({ image, title, config, repository = null 
     title: image.isNoImageFallback ? 'No Image Found' : title,
     apiKey: config?.imgbbApiKey,
     apiKeys: config?.imgbbApiKeys,
-    repository
+    repository,
+    fetchImpl
   });
 
   if (image.isNoImageFallback && hosted?.url) {

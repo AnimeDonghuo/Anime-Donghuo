@@ -287,6 +287,16 @@ export class MongoStore {
     return asRelease(document);
   }
 
+  /** Forget a mirror that no longer exists on the site (a removed non-episode card). */
+  async forgetAnimexinReleasePublication(id) {
+    const document = await AnimexinRelease.findOneAndUpdate(
+      { releaseId: String(id) },
+      { $set: { publishedAdminId: null, publishedSlug: null } },
+      { new: true, runValidators: true },
+    ).lean();
+    return asRelease(document);
+  }
+
   async addAnimexinReleaseDownload(id, download) {
     const releaseId = String(id);
     const existing = await AnimexinRelease.findOne({ releaseId, 'addedDownloads.url': download.url }).lean();

@@ -249,6 +249,32 @@ function publicPublishedItem(content, config, { detailed = false } = {}) {
   };
 }
 
+/**
+ * Merge the static catalogue with the published posts, newest first.
+ *
+ * The site used to append published posts after every static title, so a brand
+ * new episode never reached the featured hero even with `sort=newest`.
+ */
+function interleaveNewest(staticItems, publishedItems) {
+  const timeOf = (item) => {
+    const value = item?.addedAt || item?.publishedAt || null;
+    const parsed = value ? Date.parse(value) : Number.NaN;
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const merged = [...staticItems, ...publishedItems].map((item, index) => ({ item, index, time: timeOf(item) }));
+  merged.sort((left, right) => {
+    if (left.time !== null && right.time !== null) return right.time - left.time || left.index - right.index;
+    if (left.time !== null) return -1;
+    if (right.time !== null) return 1;
+    return left.index - right.index;
+  });
+  return merged.map(({ item }) => item);
+}
+
+/**
+ * Published Telegram posts are the newest thing on the site, so they lead the hero
+ * rotation and always appear once the whole catalogue is loaded.
+ */
 export function createApp({ store, config, fetchImpl = fetch, releaseFeed = null, catalogRepository = null }) {
   if (!store || !config) throw new Error('createApp requires a store and configuration.');
 
@@ -318,6 +344,8 @@ export function createApp({ store, config, fetchImpl = fetch, releaseFeed = null
         imgSrc: [
           "'self'", 'data:',
           'https://i.ibb.co',
+          // WordPress/Jetpack image CDNs, where Animexin's own featured images live.
+          'https://i0.wp.com', 'https://i1.wp.com', 'https://i2.wp.com', 'https://i3.wp.com',
           'https://cdn.myanimelist.net',
           'https://image.tmdb.org',
           'https://s1.anilist.co', 'https://s2.anilist.co', 'https://s3.anilist.co', 'https://s4.anilist.co',
@@ -481,7 +509,11 @@ export function createApp({ store, config, fetchImpl = fetch, releaseFeed = null
         .filter((entry) => !year || entry.year === year)
         .slice(0, Math.max(0, limit - staticItems.length))
       : [];
-    const items = [...staticItems, ...published];
+    // Newest first across both catalogues: the freshly published post belongs at
+    // the top of the page and in the featured hero, not after fifteen static rows.
+    const items = sort === 'newest'
+      ? interleaveNewest(staticItems, published)
+      : [...staticItems, ...published];
     response.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
     return response.json({
       items,
