@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { isIP } from 'node:net';
 
 function requiredSecret(env, name, fallback, minimumBytes = 32) {
   const value = env[name] || fallback;
@@ -35,6 +36,43 @@ export function createConfig(env = process.env) {
   const nodeEnv = env.NODE_ENV || 'development';
   const production = nodeEnv === 'production';
   const hasMongo = Boolean(env.MONGODB_URI);
+  const telegramBotToken = env.TELEGRAM_BOT_TOKEN?.trim() || null;
+  const telegramWebhookSecret = env.TELEGRAM_WEBHOOK_SECRET?.trim() || null;
+  const telegramAdminIds = [...new Set((env.TELEGRAM_ADMIN_IDS || '').split(',').map((value) => value.trim()).filter(Boolean))];
+  if (telegramAdminIds.length > 50 || telegramAdminIds.some((id) => !/^\d{1,20}$/.test(id))) {
+    throw new Error('TELEGRAM_ADMIN_IDS must be a comma-separated list of up to 50 numeric Telegram user IDs.');
+  }
+  if (telegramBotToken && (!telegramWebhookSecret || !/^[A-Za-z0-9_-]{32,256}$/.test(telegramWebhookSecret) || telegramAdminIds.length === 0)) {
+    throw new Error('TELEGRAM_BOT_TOKEN requires a 32+ character TELEGRAM_WEBHOOK_SECRET and at least one TELEGRAM_ADMIN_IDS value.');
+  }
+
+  const malClientId = env.MAL_CLIENT_ID?.trim() || null;
+  const tmdbApiKey = env.TMDB_API_KEY?.trim() || null;
+  const tmdbReadAccessToken = env.TMDB_READ_ACCESS_TOKEN?.trim() || null;
+  const imgbbApiKey = env.IMGBB_API_KEY?.trim() || null;
+  const animexinEnabled = env.ANIMEXIN_ENABLED === 'true';
+  const animexinBaseUrlValue = env.ANIMEXIN_BASE_URL?.trim() || 'https://animexin.dev';
+  let animexinBaseUrl;
+  try {
+    const parsed = new URL(animexinBaseUrlValue);
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.port || parsed.pathname !== '/' || parsed.search || parsed.hash) throw new Error();
+    animexinBaseUrl = parsed.origin;
+  } catch {
+    throw new Error('ANIMEXIN_BASE_URL must be an HTTPS origin, for example https://animexin.dev.');
+  }
+  const animexinImageHosts = [...new Set((env.ANIMEXIN_IMAGE_HOSTS || '')
+    .split(',')
+    .map((host) => host.trim().toLowerCase())
+    .filter(Boolean))];
+  const validImageHost = (host) => host.length <= 253
+    && host.includes('.')
+    && !isIP(host)
+    && !host.endsWith('.local')
+    && host !== 'localhost'
+    && /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*$/.test(host);
+  if (animexinImageHosts.length > 20 || animexinImageHosts.some((host) => !validImageHost(host))) {
+    throw new Error('ANIMEXIN_IMAGE_HOSTS must contain up to 20 public DNS hostnames, separated by commas.');
+  }
 
   if (production && !hasMongo) {
     throw new Error('MONGODB_URI is required in production; in-memory storage is development-only.');
@@ -90,6 +128,17 @@ export function createConfig(env = process.env) {
     emailLookupSecret,
     dataEncryptionKey,
     publicOrigin,
+    telegramBotToken,
+    telegramWebhookSecret,
+    telegramAdminIds: Object.freeze(telegramAdminIds),
+    imgbbApiKey,
+    malClientId,
+    tmdbApiKey,
+    tmdbReadAccessToken,
+    animexinEnabled,
+    animexinBaseUrl,
+    animexinImageHosts: Object.freeze(animexinImageHosts),
+    posterSyncEnabled: env.POSTER_SYNC_ENABLED === 'true' || (production && env.POSTER_SYNC_ENABLED !== 'false'),
     sessionCookieName: production ? '__Host-anime-donghua_session' : 'anime_donghua_session',
     csrfCookieName: production ? '__Host-anime-donghua_csrf' : 'anime_donghua_csrf',
     trustProxy: production || env.TRUST_PROXY === '1' ? 1 : false,

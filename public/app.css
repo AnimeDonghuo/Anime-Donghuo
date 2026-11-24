@@ -21,7 +21,7 @@ html,body{width:100%;max-width:100%;min-width:320px}body{overflow-x:hidden}.app{
 @media(min-width:601px) and (max-width:760px){header{padding-inline:14px;gap:10px}.logo{font-size:17px}nav{gap:8px;margin-left:4px}nav a{font-size:11px}.header-actions{gap:7px}.icon-btn{font-size:19px}}
 .logo{gap:4px}.logo .logo-anime{color:var(--text)}
 
-/* AniVerse discovery, schedule, detail, playback-status, and preference views. */
+/* Anime Donghua discovery, schedule, detail, playback-status, and preference views. */
 button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
 .dialog-button{display:inline-flex;align-items:center;justify-content:center;text-align:center;text-decoration:none}
 .hero-art.has-artwork{right:2%;top:0;width:58%;height:100%;opacity:.96;place-items:stretch}

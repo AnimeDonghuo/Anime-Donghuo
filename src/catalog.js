@@ -1,6 +1,6 @@
 const catalog = [
   {
-    id: 'perfect-world', title: 'Perfect World', type: 'donghua', format: 'series', status: 'ongoing', imageUrl: '/assets/aniverse-blue-dragon.png',
+    id: 'perfect-world', title: 'Perfect World', type: 'donghua', format: 'series', status: 'ongoing', imageUrl: '/assets/anime-donghua-blue-dragon.png',
     genres: ['Action', 'Fantasy', 'Cultivation'], sections: ['featured', 'trending'],
     description: 'Born into a world of ancient powers, one young hero sets out on a journey beyond the limits of destiny.',
   },
@@ -129,8 +129,24 @@ function isoDate(value) {
   return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : undefined;
 }
 
-export function publicTitle(item) {
-  const imageUrl = item.imageUrl || item.artworkUrl || (typeof item.artwork === 'string' ? item.artwork : item.artwork?.url);
+export function safeMediaFireUrl(value) {
+  if (typeof value !== 'string' || value.length > 2048) return undefined;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'https:' || !['mediafire.com', 'www.mediafire.com'].includes(parsed.hostname.toLowerCase())
+      || parsed.username || parsed.password || parsed.port || !/^\/(?:file|view|download)\//.test(parsed.pathname)) return undefined;
+    return parsed.href;
+  } catch {
+    return undefined;
+  }
+}
+
+export function publicTitle(item, media = null) {
+  const imageUrl = media?.imageUrl || item.imageUrl || item.artworkUrl || (typeof item.artwork === 'string' ? item.artwork : item.artwork?.url);
+  const artworkSource = typeof media?.artworkSource === 'string' && /^[a-z-]{2,40}$/.test(media.artworkSource)
+    ? media.artworkSource
+    : undefined;
+  const downloadUrl = safeMediaFireUrl(media?.downloadUrl || item.downloadUrl);
   const addedAt = isoDate(item.addedAt || item.createdAt);
   const upcomingReleaseAt = isoDate(item.upcomingReleaseAt);
   const episodeReleaseAt = isoDate(item.latestEpisode?.releaseAt);
@@ -162,6 +178,8 @@ export function publicTitle(item) {
     sections: [...(item.sections || [])],
     description: item.description,
     ...(typeof imageUrl === 'string' && imageUrl.length <= 2048 ? { imageUrl } : {}),
+    ...(artworkSource ? { artworkSource } : {}),
+    ...(downloadUrl ? { downloadUrl } : {}),
     ...(addedAt ? { addedAt } : {}),
     ...(upcomingReleaseAt ? { upcomingReleaseAt } : {}),
     ...(Number.isInteger(item.year) && item.year >= 1900 && item.year <= 2100 ? { year: item.year } : {}),

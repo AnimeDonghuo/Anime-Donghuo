@@ -1,6 +1,6 @@
-# AniVerse — anime & donghua discovery
+# Anime Donghua — anime & donghua discovery
 
-The existing homepage structure, Express API, authentication, data stores, and vanilla-JavaScript architecture are preserved. AniVerse adds the requested dark palette and supplied blue-dragon hero art, responsive discovery filters, schedule and title-detail pages, a playback-status view, guest/account My List, and browser-local discovery/reduced-motion preferences. Episode updates, release times, ratings, episode counts, and viewing progress appear only when corresponding metadata exists; the seed catalogue does not invent those values. Artwork is local, with no remote image or font requests.
+The existing homepage structure, Express API, authentication, data stores, and vanilla-JavaScript architecture are preserved. Anime Donghua adds the requested dark palette and supplied blue-dragon hero art, responsive discovery filters, schedule and title-detail pages, a playback-status view, guest/account My List, and browser-local discovery/reduced-motion preferences. Episode updates, release times, ratings, episode counts, and viewing progress appear only when corresponding metadata exists; the seed catalogue does not invent those values. Poster artwork can be resolved from the configured catalogues and stored on ImgBB when its API key is configured; there are no remote font requests.
 
 ## Run locally
 
@@ -12,7 +12,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:8000`. When running behind a single trusted preview proxy, start with `TRUST_PROXY=1 npm run dev`; do not enable that option for an unproxied public server. With no `MONGODB_URI`, local development uses an **in-memory demo store**: accounts and saved titles disappear when the server restarts. This mode is not used in production. To use MongoDB locally, configure the URI and all three persistent secrets described below.
+Open `http://localhost:8000`. When running behind a single trusted preview proxy, start with `TRUST_PROXY=1 npm run dev`; do not enable that option for an unproxied public server. With no `MONGODB_URI`, local development uses an **in-memory demo store**: accounts, saved titles, and Telegram media overrides disappear when the server restarts. This mode is not used in production. To use MongoDB locally, configure the URI and all three persistent secrets described below.
 
 Run the automated checks with:
 
@@ -56,10 +56,26 @@ Use a dedicated database user with a strong password, keep TLS enabled, and limi
 
 ### Important scraping limitation
 
-Encryption cannot stop someone from copying public content that their browser must receive. AniVerse applies rate limits and server-side bounds as friction, but this is not a guarantee against scraping, bots, screenshots, or a distributed client. Do not put private catalogue records, credentials, or unreleased media in the public frontend/API. Real video protection requires authorized source integration and access control; signed, short-lived stream URLs and a licensed DRM/provider workflow can raise the bar but cannot make rendered content impossible to capture.
+Encryption cannot stop someone from copying public content that their browser must receive. Anime Donghua applies rate limits and server-side bounds as friction, but this is not a guarantee against scraping, bots, screenshots, or a distributed client. Do not put private catalogue records, credentials, or unreleased media in the public frontend/API. Real video protection requires authorized source integration and access control; signed, short-lived stream URLs and a licensed DRM/provider workflow can raise the bar but cannot make rendered content impossible to capture.
 
 ## Catalogue and streaming
 
 The initial catalogue is sample metadata based on the supplied homepage. Update `src/catalog.js` when you provide a final, verified catalogue. The homepage cards remain present immediately so the layout renders without waiting for JavaScript; discovery, title details, and schedule views use the existing `/api/catalog` data. Optional schedule, language, year, episode, and rating metadata is sanitized before becoming public.
 
-The playback-status view is intentionally **not** a pirate stream or a fake playable video: no authorized provider URLs were supplied. It clearly reports that playback is unavailable and does not embed a video. The schedule and latest-updates views show empty states until verified data is added. Add authorized source details only when provided; never put provider credentials in client-side JavaScript. Discovery and reduced-motion preferences are saved in the current browser's local storage and are not synced to the user account.
+The playback-status view is intentionally **not** a pirate stream or a fake playable video: no stream source is embedded. It clearly reports when playback is unavailable. An optional owner-provided download link is shown only when an admin explicitly adds an authorized link; it never enables video playback. The schedule and latest-updates views show empty states until verified data is added. Never put provider credentials in client-side JavaScript. Discovery and reduced-motion preferences are saved in the current browser's local storage and are not synced to the user account.
+
+## Poster sourcing and Telegram admin bot
+
+Poster lookup uses exact normalized title matches only. When Animexin is explicitly enabled, donghua movies try it first, then MyAnimeList, AniList, and TMDB; when disabled, lookup starts with MyAnimeList. Other anime titles try MyAnimeList, then AniList, then TMDB. TMDB is limited to anime series/movies and donghua movies; donghua series do not fall through to TMDB. The Animexin scraper reads only the title and poster image from a public search result; it does not extract episodes, streams, or download links. `ANIMEXIN_BASE_URL` defaults to `https://animexin.dev` and can be overridden if the site moves. Animexin scraping is disabled by default; set `ANIMEXIN_ENABLED=true` only after confirming automated poster reuse is permitted. `ANIMEXIN_ENABLED=false` keeps it disabled. If poster files use another public CDN, list its hostname in `ANIMEXIN_IMAGE_HOSTS`. No live Animexin request is made while the source is disabled.
+
+In production, poster synchronization runs on startup unless `POSTER_SYNC_ENABLED=false`. In development/test it is off unless `POSTER_SYNC_ENABLED=true`. Resolved artwork and admin overrides are persisted in the `AnimeDonghuaTitleMedia` MongoDB collection. With `IMGBB_API_KEY`, fetched posters are uploaded to ImgBB and the cached URL is stored; without it, the app keeps the provider image URL when it is on the approved host list. The linked [AnimeDonghuo/imgtolink bot](https://github.com/AnimeDonghuo/imgtolink/tree/arena/01a052c3-imgtolink) uses ImgBB, not a separate ImgDB API. This app follows its official ImgBB upload flow only; its legacy proxy and keyless third-party fallback are intentionally not used.
+
+Optional Telegram setup uses deployment secrets/environment variables:
+
+- `TELEGRAM_BOT_TOKEN` — token from BotFather.
+- `TELEGRAM_WEBHOOK_SECRET` — a random URL-safe secret of at least 32 characters.
+- `TELEGRAM_ADMIN_IDS` — comma-separated numeric Telegram user IDs allowed to manage catalogue media.
+- `PUBLIC_ORIGIN` — the exact public app origin. When all Telegram values and `PUBLIC_ORIGIN` are set, the server registers the webhook at `/api/telegram/webhook` and installs the bot commands. Otherwise, register that webhook manually using Telegram's Bot API and the same secret token header.
+- `IMGBB_API_KEY` — required for poster uploads from Telegram.
+
+In a private chat with the bot, send a photo with caption `/poster perfect-world` to set an existing title's poster. You can also send `/poster perfect-world` and reply to that command with the photo. IDs must already exist in `src/catalog.js`; updates are admin-only. To add a download URL for a file you own or are authorized to distribute, send `/download big-fish-and-begonia https://www.mediafire.com/file/...`. The URL is validated and stored per title; the app does not search MediaFire, resolve third-party links, or prefill links for the rest of the catalogue. Do not send bot tokens or API keys in chat or commit them.

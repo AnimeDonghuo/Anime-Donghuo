@@ -21,7 +21,7 @@ const state = {
   scheduleDay: null,
   preferences: { preferredType: 'all', reduceMotion: false },
 };
-const preferenceStorageKey = 'aniverse:preferences';
+const preferenceStorageKey = 'anime-donghua:preferences';
 
 function loadPreferences() {
   try {
@@ -77,13 +77,25 @@ function makeButton(label, action, className = 'dialog-button', data = {}) {
   return button;
 }
 
+const allowedExternalArtworkHosts = new Set([
+  'i.ibb.co',
+  'cdn.myanimelist.net',
+  'image.tmdb.org',
+  's1.anilist.co', 's2.anilist.co', 's3.anilist.co', 's4.anilist.co',
+]);
+
 function artworkUrl(title) {
   const raw = title?.imageUrl || title?.artworkUrl || (typeof title?.artwork === 'string' ? title.artwork : title?.artwork?.url);
   if (typeof raw !== 'string' || !raw.trim() || raw.length > 2048) return '';
   try {
     const parsed = new URL(raw, window.location.origin);
-    if (parsed.origin !== window.location.origin || !['https:', 'http:'].includes(parsed.protocol) || parsed.username || parsed.password) return '';
-    return parsed.href;
+    if (parsed.username || parsed.password) return '';
+    if (parsed.origin === window.location.origin && ['https:', 'http:'].includes(parsed.protocol)) return parsed.href;
+    if (parsed.port || parsed.protocol !== 'https:') return '';
+    const host = parsed.hostname.toLowerCase();
+    const animexinHost = /(^|\.)animexin(?:\.(?:dev|vip|xyz|top)|ax\.com)$/.test(host);
+    const configuredAnimexinHost = title?.artworkSource === 'animexin';
+    return allowedExternalArtworkHosts.has(host) || animexinHost || configuredAnimexinHost ? parsed.href : '';
   } catch {
     return '';
   }
@@ -326,7 +338,7 @@ function showTitleDetails(title) {
     .filter(Boolean)
     .forEach((label) => meta.append(element('span', 'dialog-chip', label)));
   content.append(meta);
-  content.append(element('p', 'dialog-description', title.description || 'Explore this title in the AniVerse catalogue.'));
+  content.append(element('p', 'dialog-description', title.description || 'Explore this title in the Anime Donghua catalogue.'));
 
   if (title.genres?.length) {
     const genres = element('div', 'dialog-meta');
@@ -364,7 +376,7 @@ function showTitleDetails(title) {
 
   const note = element('div', 'dialog-note');
   note.append(element('strong', '', 'Playback is not configured. '));
-  note.append(document.createTextNode('AniVerse does not host or proxy video. A title can play only after an authorized streaming source is provided.'));
+  note.append(document.createTextNode('Anime Donghua does not host or proxy video. A title can play only after an authorized streaming source is provided.'));
   content.append(note);
 
   const actions = element('div', 'dialog-actions');
@@ -386,7 +398,7 @@ function showWatch(title) {
   content.append(player);
   const note = element('div', 'dialog-note');
   note.append(element('strong', '', 'No stream is being requested or embedded. '));
-  note.append(document.createTextNode('AniVerse does not host or proxy video. Playback can be enabled only when an authorized provider URL is supplied.'));
+  note.append(document.createTextNode('Anime Donghua does not host or proxy video. Playback can be enabled only when an authorized provider URL is supplied.'));
   content.append(note);
   content.append(makeButton('← Back to title details', 'open-title', 'dialog-button', { id: title.id }));
   const playerPage = element('a', 'dialog-button', 'Open full player page');
@@ -639,9 +651,9 @@ function showNotifications() {
 
 function showAccount() {
   if (!state.user) return showAuth('login');
-  const { content } = createDialog('Your account', 'Your AniVerse account and saved titles.');
+  const { content } = createDialog('Your account', 'Your Anime Donghua account and saved titles.');
   const profile = element('div', 'profile-card');
-  profile.append(element('div', 'profile-name', state.user.displayName || 'AniVerse fan'));
+  profile.append(element('div', 'profile-name', state.user.displayName || 'Anime Donghua fan'));
   profile.append(element('div', 'profile-email', state.user.email || ''));
   content.append(profile);
   const actions = element('div', 'dialog-actions');
@@ -654,7 +666,7 @@ function showAccount() {
 function showAuth(mode = 'login') {
   state.authMode = mode === 'register' ? 'register' : 'login';
   const isRegister = state.authMode === 'register';
-  const { content } = createDialog(isRegister ? 'Create your account' : 'Welcome back', 'Sync your saved list across devices and personalize discovery on this browser.', 'ANIVERSE ACCOUNT');
+  const { content } = createDialog(isRegister ? 'Create your account' : 'Welcome back', 'Sync your saved list across devices and personalize discovery on this browser.', 'ANIME DONGHUA ACCOUNT');
   content.innerHTML += `
     <div class="auth-tabs" role="tablist" aria-label="Account access">
       <button type="button" class="auth-tab" role="tab" aria-selected="${!isRegister}" data-action="auth-mode" data-mode="login">Sign in</button>
@@ -1324,9 +1336,16 @@ function renderTitlePage(container, title) {
 
   const note = element('div', 'dialog-note');
   note.append(element('strong', '', 'Playback is not configured. '));
-  note.append(document.createTextNode('No authorized stream is attached to this title. AniVerse does not host or proxy video.'));
+  note.append(document.createTextNode('No authorized stream is attached to this title. Anime Donghua does not host or proxy video.'));
   copy.append(note);
   const actions = element('div', 'dialog-actions');
+  if (title.downloadUrl) {
+    const download = element('a', 'dialog-button', 'Owner-provided download');
+    download.href = title.downloadUrl;
+    download.target = '_blank';
+    download.rel = 'noopener noreferrer';
+    actions.append(download);
+  }
   actions.append(makeButton('View playback status', 'navigate', 'dialog-button primary', { path: `/watch/${encodeURIComponent(title.id)}` }));
   actions.append(makeButton(state.favorites.has(title.id) ? '♥ Remove from My List' : '＋ Add to My List', 'toggle-favorite', 'dialog-button', { id: title.id }));
   copy.append(actions);
@@ -1356,7 +1375,7 @@ function renderWatchPage(container, title) {
 
   const note = element('div', 'dialog-note player-page-note');
   note.append(element('strong', '', 'This is not a playable stream. '));
-  note.append(document.createTextNode('AniVerse does not host or proxy video. Playback can be enabled only after an authorized provider source is supplied.'));
+  note.append(document.createTextNode('Anime Donghua does not host or proxy video. Playback can be enabled only after an authorized provider source is supplied.'));
   container.append(note);
   const actions = element('div', 'dialog-actions');
   actions.append(makeButton('← Back to title details', 'navigate', 'dialog-button primary', { path: `/title/${encodeURIComponent(title.id)}` }));
@@ -1379,7 +1398,7 @@ async function renderCurrentPage() {
   if (path === '/') {
     home.hidden = false;
     page.hidden = true;
-    document.title = 'AniVerse — Anime & Donghua';
+    document.title = 'Anime Donghua — Anime & Donghua';
     return;
   }
 
@@ -1396,15 +1415,15 @@ async function renderCurrentPage() {
       explore.href = '/discover';
       page.append(explore);
     }
-    document.title = 'My List | AniVerse';
+    document.title = 'My List | Anime Donghua';
     return;
   }
 
   if (path === '/profile') {
-    pageHeader(page, 'Profile & Preferences', 'Manage your AniVerse account and personalize discovery on this browser.');
+    pageHeader(page, 'Profile & Preferences', 'Manage your Anime Donghua account and personalize discovery on this browser.');
     if (state.user) {
       const profile = element('div', 'profile-card route-profile-card');
-      profile.append(element('div', 'profile-name', state.user.displayName || 'AniVerse fan'));
+      profile.append(element('div', 'profile-name', state.user.displayName || 'Anime Donghua fan'));
       profile.append(element('div', 'profile-email', state.user.email || ''));
       profile.append(makeButton(`My List (${state.favorites.size})`, 'navigate', 'dialog-button primary', { path: '/my-list' }));
       profile.append(makeButton('Sign out', 'logout', 'dialog-button'));
@@ -1414,7 +1433,7 @@ async function renderCurrentPage() {
       page.append(makeButton('Sign in or create an account', 'account', 'dialog-button primary'));
     }
     page.append(makePreferencesForm());
-    document.title = 'Profile & Preferences | AniVerse';
+    document.title = 'Profile & Preferences | Anime Donghua';
     return;
   }
 
@@ -1429,19 +1448,19 @@ async function renderCurrentPage() {
     });
     if (genres.length) page.append(list);
     else emptyPage(page, 'Genres will appear here when catalogue data is available.');
-    document.title = 'Categories | AniVerse';
+    document.title = 'Categories | Anime Donghua';
     return;
   }
 
   if (path === '/discover') {
     renderDiscoveryPage(page);
-    document.title = 'Discover | AniVerse';
+    document.title = 'Discover | Anime Donghua';
     return;
   }
 
   if (path === '/schedule') {
     renderSchedulePage(page);
-    document.title = 'Release Schedule | AniVerse';
+    document.title = 'Release Schedule | Anime Donghua';
     return;
   }
 
@@ -1454,14 +1473,14 @@ async function renderCurrentPage() {
       updates.forEach((title) => list.append(makeUpdateCard(title)));
       page.append(list);
     }
-    document.title = 'Latest Updates | AniVerse';
+    document.title = 'Latest Updates | Anime Donghua';
     return;
   }
 
   if (path === '/continue-watching') {
     pageHeader(page, 'Continue Watching', 'Saved playback progress will appear here only after an authorized source is connected.');
-    emptyPage(page, 'No saved playback progress is available. Playback sources are not configured, so AniVerse has not recorded progress.');
-    document.title = 'Continue Watching | AniVerse';
+    emptyPage(page, 'No saved playback progress is available. Playback sources are not configured, so Anime Donghua has not recorded progress.');
+    document.title = 'Continue Watching | Anime Donghua';
     return;
   }
 
@@ -1482,12 +1501,12 @@ async function renderCurrentPage() {
     if (!title) {
       pageHeader(page, 'Title Not Found', 'This title is not available in the current catalogue.');
       emptyPage(page, 'Return to Discover to browse available titles.');
-      document.title = 'Title Not Found | AniVerse';
+      document.title = 'Title Not Found | Anime Donghua';
       return;
     }
     if (isWatchPage) renderWatchPage(page, title);
     else renderTitlePage(page, title);
-    document.title = `${title.title} | AniVerse`;
+    document.title = `${title.title} | Anime Donghua`;
     return;
   }
 
@@ -1513,7 +1532,7 @@ async function renderCurrentPage() {
   } catch (error) {
     emptyPage(page, error.message || 'The catalogue could not be loaded. Please try again.');
   }
-  document.title = `${definition.title} | AniVerse`;
+  document.title = `${definition.title} | Anime Donghua`;
 }
 
 async function refreshCatalog() {

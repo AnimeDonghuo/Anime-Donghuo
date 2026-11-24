@@ -32,7 +32,9 @@ test('private profile fields are authenticated AES-GCM ciphertext', () => {
   const ciphertext = encryptPrivateField('person@example.com', testConfig.dataEncryptionKey, 'email');
   assert.notEqual(ciphertext, 'person@example.com');
   assert.equal(decryptPrivateField(ciphertext, testConfig.dataEncryptionKey, 'email'), 'person@example.com');
-  assert.throws(() => decryptPrivateField(`${ciphertext.slice(0, -1)}A`, testConfig.dataEncryptionKey, 'email'));
+  const tampered = ciphertext.split('.');
+  tampered[3] = `${tampered[3][0] === 'A' ? 'B' : 'A'}${tampered[3].slice(1)}`;
+  assert.throws(() => decryptPrivateField(tampered.join('.'), testConfig.dataEncryptionKey, 'email'));
   assert.throws(() => decryptPrivateField(ciphertext, testConfig.dataEncryptionKey, 'display-name'));
 });
 
@@ -72,5 +74,28 @@ test('production configuration requires durable storage, TLS, and persistent sec
   });
   assert.equal(production.production, true);
   assert.equal(production.trustProxy, 1);
+  assert.equal(production.animexinEnabled, false);
   assert.equal(production.sessionCookieName, '__Host-anime-donghua_session');
+});
+
+test('Telegram webhook configuration requires a secret and admin allowlist', () => {
+  const base = {
+    NODE_ENV: 'test',
+    PORT: '8000',
+    SESSION_SECRET: 'telegram-config-session-secret-long-enough-to-be-safe',
+    EMAIL_LOOKUP_SECRET: 'telegram-config-email-secret-long-enough-to-be-safe',
+    DATA_ENCRYPTION_KEY: Buffer.alloc(32, 17).toString('base64'),
+    TELEGRAM_BOT_TOKEN: '123456:placeholder-token',
+  };
+  assert.throws(() => createConfig(base), /TELEGRAM_WEBHOOK_SECRET/);
+  assert.throws(() => createConfig({ ...base, TELEGRAM_WEBHOOK_SECRET: 'a'.repeat(32) }), /TELEGRAM_ADMIN_IDS/);
+  assert.throws(() => createConfig({ ...base, TELEGRAM_WEBHOOK_SECRET: 'a'.repeat(32), TELEGRAM_ADMIN_IDS: '123,wrong' }), /numeric Telegram user IDs/);
+
+  const config = createConfig({
+    ...base,
+    TELEGRAM_WEBHOOK_SECRET: 'telegram-webhook-secret-long-enough-32-chars',
+    TELEGRAM_ADMIN_IDS: '123,456,123',
+  });
+  assert.deepEqual(config.telegramAdminIds, ['123', '456']);
+  assert.equal(config.posterSyncEnabled, false);
 });

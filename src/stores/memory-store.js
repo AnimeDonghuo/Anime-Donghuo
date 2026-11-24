@@ -9,6 +9,7 @@ function duplicateEmailError() {
 export class MemoryStore {
   #users = new Map();
   #emailIndex = new Map();
+  #titleMedia = new Map();
 
   async findUserByEmailLookup(emailLookup) {
     const id = this.#emailIndex.get(emailLookup);
@@ -63,6 +64,27 @@ export class MemoryStore {
     if (!user || user.tokenVersion !== currentVersion) return false;
     user.tokenVersion += 1;
     return true;
+  }
+
+  async getTitleMedia(titleIds) {
+    const result = new Map();
+    for (const titleId of titleIds) {
+      const media = this.#titleMedia.get(String(titleId));
+      if (media) result.set(String(titleId), { ...media });
+    }
+    return result;
+  }
+
+  async setTitleMedia(titleId, fields) {
+    const key = String(titleId);
+    const media = {
+      ...(this.#titleMedia.get(key) || {}),
+      ...fields,
+      titleId: key,
+      updatedAt: new Date(),
+    };
+    this.#titleMedia.set(key, media);
+    return { ...media };
   }
 
   isHealthy() {

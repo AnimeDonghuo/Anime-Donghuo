@@ -16,6 +16,23 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.models.AnimeDonghuaUser || mongoose.model('AnimeDonghuaUser', userSchema);
 
+const titleMediaSchema = new mongoose.Schema({
+  titleId: { type: String, required: true, unique: true, immutable: true, maxlength: 100 },
+  imageUrl: { type: String, maxlength: 2048 },
+  artworkSource: { type: String, maxlength: 40 },
+  artworkUpdatedAt: { type: Date },
+  artworkCheckedAt: { type: Date },
+  downloadUrl: { type: String, maxlength: 2048 },
+  downloadUpdatedAt: { type: Date },
+}, {
+  timestamps: true,
+  versionKey: false,
+  strict: 'throw',
+  minimize: true,
+});
+
+const TitleMedia = mongoose.models.AnimeDonghuaTitleMedia || mongoose.model('AnimeDonghuaTitleMedia', titleMediaSchema);
+
 function asUser(document) {
   if (!document) return null;
   return {
@@ -108,6 +125,44 @@ export class MongoStore {
       { $inc: { tokenVersion: 1 } },
     );
     return result.modifiedCount === 1;
+  }
+
+  async getTitleMedia(titleIds) {
+    if (!Array.isArray(titleIds) || titleIds.length === 0) return new Map();
+    const documents = await TitleMedia.find({ titleId: { $in: titleIds } }).lean();
+    return new Map(documents.map((document) => [document.titleId, {
+      titleId: document.titleId,
+      imageUrl: document.imageUrl,
+      artworkSource: document.artworkSource,
+      artworkUpdatedAt: document.artworkUpdatedAt,
+      artworkCheckedAt: document.artworkCheckedAt,
+      downloadUrl: document.downloadUrl,
+      downloadUpdatedAt: document.downloadUpdatedAt,
+      updatedAt: document.updatedAt,
+    }]));
+  }
+
+  async setTitleMedia(titleId, fields) {
+    const allowed = ['imageUrl', 'artworkSource', 'artworkUpdatedAt', 'artworkCheckedAt', 'downloadUrl', 'downloadUpdatedAt'];
+    const set = Object.fromEntries(allowed
+      .filter((key) => Object.hasOwn(fields, key) && fields[key] !== undefined)
+      .map((key) => [key, fields[key]]));
+    if (Object.keys(set).length === 0) return null;
+    const document = await TitleMedia.findOneAndUpdate(
+      { titleId: String(titleId) },
+      { $set: set },
+      { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true },
+    ).lean();
+    return {
+      titleId: document.titleId,
+      imageUrl: document.imageUrl,
+      artworkSource: document.artworkSource,
+      artworkUpdatedAt: document.artworkUpdatedAt,
+      artworkCheckedAt: document.artworkCheckedAt,
+      downloadUrl: document.downloadUrl,
+      downloadUpdatedAt: document.downloadUpdatedAt,
+      updatedAt: document.updatedAt,
+    };
   }
 
   isHealthy() {

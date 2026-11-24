@@ -46,12 +46,20 @@ test('health, readiness, and homepage are served safely', async () => {
   assert.match(homeResponse.headers.get('content-security-policy'), /script-src 'self'/);
   assert.equal(homeResponse.headers.get('x-powered-by'), null);
   const homeHtml = await homeResponse.text();
-  assert.match(homeHtml, /<title>AniVerse/);
+  assert.match(homeHtml, /<title>Anime Donghua/);
+  assert.match(homeHtml, /aria-label="Anime Donghua home"/);
+  assert.match(homeHtml, /<span class="logo-anime">Anime<\/span><span>Donghua<\/span>/);
   assert.match(homeHtml, /Perfect<br>World/);
   assert.match(homeHtml, /anime-donghua-mark\.jpg/);
-  assert.match(homeHtml, /aniverse-blue-dragon\.png/);
-  assert.match(homeHtml, /app\.css\?v=aniverse-v1/);
-  assert.match(homeHtml, /app\.js\?v=aniverse-v1/);
+  assert.match(homeHtml, /anime-donghua-blue-dragon\.png/);
+  const heroAsset = await fetch(`${baseUrl}/assets/anime-donghua-blue-dragon.png`);
+  assert.equal(heroAsset.status, 200);
+  assert.match(heroAsset.headers.get('content-type'), /image\/png/);
+  assert.match(homeHtml, /app\.css\?v=anime-donghua-v2/);
+  assert.match(homeHtml, /app\.js\?v=anime-donghua-v2/);
+  assert.match(homeResponse.headers.get('content-security-policy'), /img-src[^;]*https:\/\/i\.ibb\.co/);
+  assert.equal(homeResponse.headers.get('cross-origin-resource-policy'), 'same-origin');
+  assert.match(homeHtml, /<button class="avatar"[^>]*>AD<\/button>/);
   assert.match(homeHtml, /width:100vw!important;max-width:none!important/);
   assert.match(homeHtml, /No saved playback progress yet/);
   assert.doesNotMatch(homeHtml, /EP\s?\d+|hours ago|★ 9\.4|200\+ eps/);
@@ -61,8 +69,8 @@ test('health, readiness, and homepage are served safely', async () => {
 
 test('versioned frontend assets bypass stale browser cache', async () => {
   const [cssResponse, jsResponse] = await Promise.all([
-    fetch(`${baseUrl}/app.css?v=aniverse-v1`),
-    fetch(`${baseUrl}/app.js?v=aniverse-v1`),
+    fetch(`${baseUrl}/app.css?v=anime-donghua-v2`),
+    fetch(`${baseUrl}/app.js?v=anime-donghua-v2`),
   ]);
   assert.equal(cssResponse.status, 200);
   assert.equal(jsResponse.status, 200);
@@ -107,6 +115,16 @@ test('public catalogue titles retain safe artwork and verified metadata only', (
     watchUrl: 'https://untrusted.example/video',
   });
   assert.equal(mapped.imageUrl, '/assets/perfect-world-poster.jpg');
+  const overridden = publicTitle(catalogItems[0], {
+    imageUrl: 'https://i.ibb.co/abc/perfect-world.jpg',
+    artworkSource: 'telegram',
+    downloadUrl: 'https://www.mediafire.com/file/abc/perfect-world.zip',
+  });
+  assert.equal(overridden.imageUrl, 'https://i.ibb.co/abc/perfect-world.jpg');
+  assert.equal(overridden.artworkSource, 'telegram');
+  assert.equal(overridden.downloadUrl, 'https://www.mediafire.com/file/abc/perfect-world.zip');
+  assert.equal('downloadUrl' in publicTitle(catalogItems[0], { downloadUrl: 'https://example.org/file.zip' }), false);
+  assert.equal('downloadUrl' in publicTitle(catalogItems[0], { downloadUrl: 'https://www.mediafire.com:444/file/abc/file.zip' }), false);
   assert.equal(mapped.addedAt, '2026-11-24T10:00:00.000Z');
   assert.equal(mapped.upcomingReleaseAt, '2026-12-01T10:00:00.000Z');
   assert.equal(mapped.year, 2024);

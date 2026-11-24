@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { catalogById, catalogItems, publicTitle } from './catalog.js';
+import { createTelegramWebhookHandler } from './telegram-bot.js';
 import {
   constantTimeStringEqual,
   createSessionToken,
@@ -153,9 +154,10 @@ function parsePositiveInteger(value, fallback, maximum) {
   return parsed;
 }
 
-export function createApp({ store, config }) {
+export function createApp({ store, config, fetchImpl = fetch }) {
   if (!store || !config) throw new Error('createApp requires a store and configuration.');
 
+  const animexinHost = new URL(config.animexinBaseUrl).hostname;
   const app = express();
   app.disable('x-powered-by');
   if (config.trustProxy) app.set('trust proxy', config.trustProxy);
@@ -171,7 +173,20 @@ export function createApp({ store, config }) {
         formAction: ["'self'"],
         frameAncestors: config.production ? ["'none'"] : ["'self'", 'https:'],
         frameSrc: ["'none'"],
-        imgSrc: ["'self'", 'data:'],
+        imgSrc: [
+          "'self'", 'data:',
+          'https://i.ibb.co',
+          'https://cdn.myanimelist.net',
+          'https://image.tmdb.org',
+          'https://s1.anilist.co', 'https://s2.anilist.co', 'https://s3.anilist.co', 'https://s4.anilist.co',
+          'https://animexin.dev', 'https://*.animexin.dev',
+          'https://animexin.vip', 'https://*.animexin.vip',
+          'https://animexin.xyz', 'https://*.animexin.xyz',
+          'https://animexin.top', 'https://*.animexin.top',
+          'https://animexinax.com', 'https://*.animexinax.com',
+          `https://${animexinHost}`, `https://*.${animexinHost}`,
+          ...(config.animexinImageHosts || []).flatMap((host) => [`https://${host}`, `https://*.${host}`]),
+        ],
         mediaSrc: ["'self'"],
         objectSrc: ["'none'"],
         scriptSrc: ["'self'"],
@@ -203,6 +218,22 @@ export function createApp({ store, config }) {
     message: { error: 'Too many sign-in attempts. Please wait a little before trying again.' },
   });
 
+  if (config.telegramBotToken) {
+    const telegramLimiter = rateLimit({
+      windowMs: 60_000,
+      limit: 30,
+      standardHeaders: 'draft-8',
+      legacyHeaders: false,
+      message: 'Too many Telegram webhook updates.',
+    });
+    app.post(
+      '/api/telegram/webhook',
+      telegramLimiter,
+      express.json({ limit: '24kb', strict: true }),
+      createTelegramWebhookHandler({ config, store, fetchImpl }),
+    );
+  }
+
   app.use('/api', apiLimiter, csrfAndOriginGuard(config));
   app.use(express.json({ limit: '24kb', strict: true }));
 
@@ -231,7 +262,7 @@ export function createApp({ store, config }) {
     response.json({ csrfToken: token });
   });
 
-  app.get('/api/catalog', (request, response) => {
+  app.get('/api/catalog', async (request, response) => {
     const query = typeof request.query.q === 'string' ? request.query.q.trim().toLowerCase() : '';
     const type = request.query.type;
     const format = request.query.format;
@@ -292,20 +323,23 @@ export function createApp({ store, config }) {
         })
         .map(({ item }) => item);
     }
+    const pageItems = filtered.slice(offset, offset + limit);
+    const mediaById = await store.getTitleMedia(pageItems.map((item) => item.id));
     response.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
     return response.json({
-      items: filtered.slice(offset, offset + limit).map(publicTitle),
+      items: pageItems.map((item) => publicTitle(item, mediaById.get(item.id))),
       total: filtered.length,
       offset,
       limit,
     });
   });
 
-  app.get('/api/catalog/:id', (request, response) => {
+  app.get('/api/catalog/:id', async (request, response) => {
     const item = catalogById.get(request.params.id);
     if (!item) return response.status(404).json({ error: 'Title not found.' });
-    response.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=120');
-    return response.json({ item: publicTitle(item) });
+    const mediaById = await store.getTitleMedia([item.id]);
+    response.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
+    return response.json({ item: publicTitle(item, mediaById.get(item.id)) });
   });
 
   app.post('/api/auth/register', authLimiter, requireJsonBody, async (request, response) => {
