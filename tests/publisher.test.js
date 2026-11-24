@@ -273,3 +273,22 @@ test('a card link on the site domain resolves to its post id', () => {
   const text = postIdAnswerText(card, config);
   assert.match(text, /Catalog page: https:\/\/app\.animedonghua\.nx\.kg\/donghua\/swallowed-star-season-4/);
 });
+
+test('the announcement caption keeps the whole page link at the end', async () => {
+  const { announcementCaption } = await import('../src/server/services/telegram-bot.js');
+  const content = {
+    title: 'Battle Through The Heavens Episode 92',
+    category: 'donghua',
+    year: 2026,
+    languages: ['Chinese'],
+    subtitleLanguages: ['English'],
+    genres: ['Action', 'Fantasy'],
+    description: 'x'.repeat(800),
+    filesCount: 4,
+  };
+  const pageUrl = 'https://app.animedonghua.nx.kg/donghua/battle-through-the-heavens-the-battle-of-two-emperors';
+  const caption = announcementCaption(content, { pageUrl });
+  assert.ok(caption.length <= 1024, 'caption stays inside Telegram limits');
+  assert.ok(caption.endsWith(`Watch here:</b> ${pageUrl}`), 'the link is whole and last');
+  assert.ok(caption.includes(pageUrl), 'the full page path survives, not a truncated slug');
+});

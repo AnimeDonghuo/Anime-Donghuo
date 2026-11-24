@@ -161,14 +161,36 @@ function parsePositiveInteger(value, fallback, maximum) {
 function publishedTitleContent(content, config) {
   const category = String(content?.category || '').toLowerCase();
   if (!content?.slug || !content?.title) return null;
+  // A draft is not public anywhere: not in a shelf, not by slug, not by Post ID.
+  if (content.published === false) return null;
   // Only the shelves this site publishes are exposed publicly.
   const type = category === 'donghua' ? 'donghua' : ['anime', 'cartoon', 'movie'].includes(category) ? 'anime' : null;
   if (!type) return null;
-  return { ...toPublicContent(content, config || {}, { includeFileChoices: true }), type };
+  const publicConfig = {
+    ...(config || {}),
+    // The publisher config keeps its Telegram settings under `telegram`; the public
+    // serializer reads `botUsername` from there. Without this bridge a card with
+    // delivery files threw and every published post looked "not available".
+    telegram: {
+      ...(config?.telegram || {}),
+      botUsername: config?.telegram?.botUsername || config?.telegramBotUsername || null,
+    },
+    streaming: config?.streaming || {},
+    playback: config?.playback || {},
+  };
+  // includeFileChoices: the detail page needs the stream entries (players) and the
+  // delivery file list, both of which the list serializer intentionally drops.
+  return { ...toPublicContent(content, publicConfig, { includeFileChoices: true }), type };
 }
 
-/** Public serialization of one publisher catalog record, or null when it is not public. */
-function publicPublishedItem(content, config) {
+/**
+ * Public serialization of one publisher catalog record, or null when it is not public.
+ *
+ * `detailed` adds the delivery list the post page renders (the bot-uploaded files
+ * and the MediaFire links the publisher registered). Listings stay lean so a
+ * 48-card page never ships other people's file lists.
+ */
+function publicPublishedItem(content, config, { detailed = false } = {}) {
   const item = publishedTitleContent(content, config);
   if (!item) return null;
   const players = Array.isArray(item.stream?.entries)
@@ -201,6 +223,27 @@ function publicPublishedItem(content, config) {
     ...(item.episodeCount > 0 ? { episodeCount: item.episodeCount } : {}),
     ...(item.publishedAt ? { addedAt: item.publishedAt } : {}),
     ...(item.telegramUrl ? { telegramUrl: item.telegramUrl } : {}),
+    ...(detailed && Number(item.filesCount) > 0 ? { filesCount: Number(item.filesCount) } : {}),
+    ...(detailed && Array.isArray(item.fileChoices) && item.fileChoices.length
+      ? {
+        fileChoices: item.fileChoices.map((choice) => ({
+          id: choice.id,
+          position: choice.position,
+          label: choice.label,
+          fileName: choice.fileName,
+          quality: choice.quality,
+          size: choice.size,
+          kind: choice.kind,
+          episode: choice.episode,
+          season: choice.season,
+          telegramUrl: choice.telegramUrl || null,
+          deliveryUrl: choice.deliveryUrl || null,
+        })),
+      }
+      : {}),
+    ...(detailed && item.deliveryUrl ? { deliveryUrl: item.deliveryUrl, deliveryReady: Boolean(item.deliveryReady) } : {}),
+    // MediaFire is the only external download host this site exposes.
+    ...(detailed && content.downloadUrl ? { downloadUrl: content.downloadUrl } : {}),
     publisherAdminId: content.adminId || null,
     source: 'publisher',
   };
@@ -225,6 +268,20 @@ export function createApp({ store, config, fetchImpl = fetch, releaseFeed = null
     } catch {
       return null;
     }
+  }
+
+  /** A link the bot printed may carry either the slug or the SB-… Post ID. */
+  async function publisherContentByReference(reference) {
+    const value = String(reference || '').trim();
+    if (!value) return null;
+    if (/^SB-[A-Z0-9]{6,}$/i.test(value) && typeof publisher?.findContentByAdminId === 'function') {
+      try {
+        return await publisher.findContentByAdminId(value.toUpperCase());
+      } catch {
+        return null;
+      }
+    }
+    return publisherContentBySlug(value);
   }
 
   async function publisherContentList({ type, format } = {}) {
@@ -441,9 +498,9 @@ export function createApp({ store, config, fetchImpl = fetch, releaseFeed = null
       response.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
       return response.json({ item: publicTitle(item, mediaById.get(item.id)) });
     }
-    // A published Telegram post is addressable by its slug.
-    const published = await publisherContentBySlug(request.params.id);
-    const publishedItem = published && published.published !== false ? publicPublishedItem(published, config) : null;
+    // A published Telegram post is addressable by its slug or its SB-… Post ID.
+    const published = await publisherContentByReference(request.params.id);
+    const publishedItem = published && published.published !== false ? publicPublishedItem(published, config, { detailed: true }) : null;
     if (publishedItem) {
       response.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
       return response.json({ item: publishedItem });
@@ -636,18 +693,25 @@ export function createApp({ store, config, fetchImpl = fetch, releaseFeed = null
     if (catalogById.has(request.params.id)) {
       return response.set('Cache-Control', 'no-cache').sendFile(`${publicDirectory}/index.html`);
     }
-    const published = await publisherContentBySlug(request.params.id);
+    const published = await publisherContentByReference(request.params.id);
     if (!published || published.published === false) return next();
     return response.set('Cache-Control', 'no-cache').sendFile(`${publicDirectory}/index.html`);
   });
   // The publisher bot links to /<category>/<slug> (e.g. /donghua/swallowed-star-season-4).
   // Those cards live in the publisher catalog, so the route must serve the app shell
   // and let the client resolve the slug instead of 404ing on a live post.
+  // The bot also prints the Post ID itself, so /post/<SB-…> (and a bare /<SB-…>)
+  // opens the same card. A printed ID must never dead-end.
+  app.get(['/post/:id', '/p/:id'], async (request, response, next) => {
+    const published = await publisherContentByReference(request.params.id);
+    if (!published || published.published === false) return next();
+    return response.set('Cache-Control', 'no-cache').sendFile(`${publicDirectory}/index.html`);
+  });
   app.get('/:category/:slug', async (request, response, next) => {
     const category = String(request.params.category || '').toLowerCase();
     if (!['anime', 'donghua', 'movie', 'cartoon'].includes(category)) return next();
     if (!/^[a-z0-9][a-z0-9-]{0,119}$/i.test(request.params.slug || '')) return next();
-    const published = await publisherContentBySlug(request.params.slug);
+    const published = await publisherContentByReference(request.params.slug);
     if (!published || published.published === false) {
       // Give a clear answer instead of a bare 404 when the post simply is not
       // published yet (or was deleted after the bot shared the link).

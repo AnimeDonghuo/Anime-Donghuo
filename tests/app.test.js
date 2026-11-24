@@ -49,14 +49,20 @@ test('health, readiness, and homepage are served safely', async () => {
   assert.match(homeHtml, /<title>Anime Donghua/);
   assert.match(homeHtml, /aria-label="Anime Donghua home"/);
   assert.match(homeHtml, /<span class="logo-anime">Anime<\/span><span>Donghua<\/span>/);
-  assert.match(homeHtml, /Perfect<br>World/);
+  // The home page is rendered from the live catalogue, so the shell must not ship
+  // hardcoded titles and must expose the shelves the client fills in.
+  assert.doesNotMatch(homeHtml, /Perfect World|Soul Land|Jujutsu Kaisen/);
+  assert.match(homeHtml, /data-shelf="trending"/);
+  assert.match(homeHtml, /data-shelf="donghua"/);
+  assert.match(homeHtml, /data-shelf="anime"/);
+  assert.match(homeHtml, /data-shelf="latest"/);
+  assert.match(homeHtml, /data-live="featured"/);
   assert.match(homeHtml, /anime-donghua-mark\.jpg/);
-  assert.match(homeHtml, /anime-donghua-blue-dragon\.png/);
   const heroAsset = await fetch(`${baseUrl}/assets/anime-donghua-blue-dragon.png`);
   assert.equal(heroAsset.status, 200);
   assert.match(heroAsset.headers.get('content-type'), /image\/png/);
-  assert.match(homeHtml, /app\.css\?v=anime-donghua-v3/);
-  assert.match(homeHtml, /app\.js\?v=anime-donghua-v3/);
+  assert.match(homeHtml, /app\.css\?v=anime-donghua-v5/);
+  assert.match(homeHtml, /app\.js\?v=anime-donghua-v5/);
   assert.match(homeResponse.headers.get('content-security-policy'), /img-src[^;]*https:\/\/i\.ibb\.co/);
   assert.match(homeResponse.headers.get('content-security-policy'), /frame-src[^;]*https:\/\/.*dailymotion\.com/);
   assert.match(homeResponse.headers.get('content-security-policy'), /frame-src[^;]*https:\/\/.*rumble\.com/);
@@ -357,8 +363,10 @@ test('published Telegram posts resolve on the site instead of 404', async () => 
     published: true,
     publishedAt,
     shareCode: 'sharecode01',
-    hasDelivery: false,
-    files: [],
+    // A card the bot published always has delivery files; those used to throw in
+    // the public serializer because the app config had no Telegram block.
+    hasDelivery: true,
+    files: [{ name: 'Swallowed.Star.S04E01.mp4', displayName: 'Episode 1', storageMessageId: 11, quality: '1080p', kind: 'video', size: 1024 }],
     stream: {
       entries: [{
         provider: 'Dailymotion',

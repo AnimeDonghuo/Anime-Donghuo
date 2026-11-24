@@ -258,6 +258,7 @@ export const PUBLISHER_COMMANDS = [
   { command: 'p', description: 'Short alias for /poster' },
   { command: 'imgdd', description: 'Add artwork with the same old/new poster flow' },
   { command: 'animexinplayers', description: 'Import authorized Dailymotion/Rumble players from Animexin' },
+  { command: 'checkanimexin', description: 'Check every Animexin release and publish new posts' },
   { command: 'scrape', description: 'Scrape info & artwork from web: /scrape SB-ID URL' },
   { command: 'category', description: 'Set the category of one or many posts' },
   { command: 'release', description: 'Set a release label on one or many posts' },
@@ -1177,11 +1178,28 @@ export function posterCandidateListText(candidates = []) {
 }
 
 /** One card, described the way a publisher needs it: the ID first, then how to use it. */
+/**
+ * The page a publisher should share for this card.
+ *
+ * A merge or rename can leave a record whose stored slug is not what the title
+ * would slugify to. The bot must print the slug that is actually addressable, so
+ * the link it prints always opens. Falls back to a file-backed URL when the card
+ * slug is missing.
+ */
+export function canonicalContentUrl(config, content) {
+  const pageUrl = getContentPageUrl(config, content);
+  if (pageUrl) return pageUrl;
+  if (config?.siteUrl && content?.adminId) {
+    return `${config.siteUrl}/post/${encodeURIComponent(content.adminId)}`;
+  }
+  return null;
+}
+
 export function postIdAnswerText(content, config = null) {
   const files = Number.isInteger(Number(content.filesCount))
     ? content.filesCount
     : (Array.isArray(content.files) ? content.files.length : 0);
-  const link = config ? getContentPageUrl(config, content) : null;
+  const link = config ? canonicalContentUrl(config, content) : null;
   const facts = [
     categoryDetails(content.category).label,
     Number(content.year) ? String(content.year) : null,
@@ -2500,7 +2518,18 @@ async function showDraftStatus(ctx, repository) {
 
 // Exported because a caller outside this file needs to know what the channel *should* say:
 // /sync compares it with what a reference remembers being sent, and a test asserts the same.
-export function announcementCaption(content) {
+/** Telegram captions are capped at 1024 characters; the link line is reserved first. */
+const ANNOUNCEMENT_LINK_RESERVE = 120;
+
+/**
+ * The caption always ends with the exact page the button opens. A previous cut
+ * kept the first 1000 characters, which sliced the recommended link in half
+ * (…/donghua/battle-through-the-heavens) and made it unopenable.
+ */
+export function announcementCaption(content, { siteUrl = null, pageUrl = null } = {}) {
+  const link = pageUrl || (siteUrl && content?.slug ? `${siteUrl}/${content.category || 'donghua'}/${content.slug}` : null);
+  const linkLine = link ? `🌐 <b>Watch here:</b> ${escapeHtml(link)}` : null;
+  const budget = linkLine ? 1000 - ANNOUNCEMENT_LINK_RESERVE : 1000;
   const episodeSummary = content.episodeCount ? `${content.episodeCount} episode${content.episodeCount === 1 ? '' : 's'}` : null;
   const facts = [
     content.year ? `📅 <b>Year:</b> ${content.year}` : null,
@@ -2511,7 +2540,7 @@ export function announcementCaption(content) {
   ].filter(Boolean);
   const synopsis = cleanText(content.description, 420);
 
-  return [
+  const body = [
     `🎬 <b>NEW ${escapeHtml(String(content.categoryLabel || categoryDetails(content.category).label).toUpperCase())} DROP</b>`,
     '',
     `<b>${escapeHtml(content.title)}</b>`,
@@ -2521,11 +2550,16 @@ export function announcementCaption(content) {
     synopsis ? escapeHtml(synopsis) : null,
     '',
     'Tap the button below for full details, episode guide, and Telegram delivery.'
-  ].filter((line) => line !== null).join('\n').slice(0, 1000);
+  ].filter((line) => line !== null).join('\n');
+
+  if (!linkLine) return body.slice(0, 1000);
+  // Trim the synopsis, never the link: rebuild with the link appended last.
+  const room = Math.max(0, 1000 - linkLine.length - 2);
+  return `${body.slice(0, room)}\n\n${linkLine}`;
 }
 
 function announcementKeyboard(config, content, websiteUrl = null) {
-  const link = websiteUrl || (config ? getContentPageUrl(config, content) : null);
+  const link = websiteUrl || (config ? canonicalContentUrl(config, content) : null);
   return link ? Markup.inlineKeyboard([[Markup.button.url('✨ VIEW ON WEBSITE', link)]]) : undefined;
 }
 
@@ -3005,8 +3039,8 @@ export async function sweepAnnouncedCards({ repository, config = null, adminId =
   let leftAlone = 0;
   let deferred = 0;
   for (const content of cards) {
-    const link = config ? getContentPageUrl(config, content) : null;
-    const caption = announcementCaption(content);
+    const link = config ? canonicalContentUrl(config, content) : null;
+    const caption = announcementCaption(content, { pageUrl: link });
     const posterUrl = content.posterUrl || null;
     const references = Array.isArray(content.announcementRefs) ? content.announcementRefs : [];
     const behind = [];
@@ -3247,7 +3281,7 @@ export async function syncPublishedAnnouncements({ telegram, repository, content
   const refs = Array.isArray(source?.announcementRefs) ? source.announcementRefs : [];
   const result = { updated: 0, unchanged: 0, failed: 0, blocked: 0, dropped: 0, unsyncable: 0, skipped: 0, promoted: 0, upgradeFailed: 0, reason: null, channels: refs.length, retryAfterMs: 0 };
   if (!refs.length || !telegram || isAdultCategory(source?.category)) return result;
-  const caption = announcementCaption(source);
+  const caption = announcementCaption(source, { pageUrl: config ? canonicalContentUrl(config, source) : null });
   const posterUrl = source.posterUrl || null;
   let downloadedPoster;
   const download = (url) => (downloadedPoster ||= downloadPosterImage(url).catch((error) => { downloadedPoster = null; throw error; }));
@@ -3997,7 +4031,7 @@ export async function announcePublishedContent({ bot, repository, content, websi
   // Announcement channels deliberately send users to the catalog page first.
   // The public page is where the user can review details and choose Telegram delivery.
   const keyboard = websiteUrl ? Markup.inlineKeyboard([[Markup.button.url('✨ VIEW ON WEBSITE', websiteUrl)]]) : undefined;
-  const caption = announcementCaption(content);
+  const caption = announcementCaption(content, { pageUrl: websiteUrl });
   const posts = [];
   let sent = 0;
   let failed = 0;
@@ -4585,7 +4619,7 @@ async function publishDraftSession({
         const content = await repository.appendFilesToContentByMergeKey(existingMatch.key, session.files, mergeKeys, category);
         if (!content) throw new Error('The existing same-title post could not be updated.');
         if (deleteSessionOnSuccess) await repository.deleteSession(chatId(ctx), userId(ctx));
-        const websiteUrl = getContentPageUrl(config, content);
+        const websiteUrl = canonicalContentUrl(config, content);
         const deliveryUrl = getTelegramDeliveryUrl(config, content.shareCode);
         // The channel post lists how many episodes/files a release carries, so
         // an append has to refresh it as well.
@@ -4707,7 +4741,7 @@ async function publishDraftSession({
     }
 
     const url = getTelegramDeliveryUrl(config, content.shareCode);
-    const websiteUrl = getContentPageUrl(config, content);
+    const websiteUrl = canonicalContentUrl(config, content);
     const privateAdultPost = isAdultCategory(content.category);
     let announcements = { sent: 0, failed: 0, skipped: 0, configured: false, suppressed: privateAdultPost };
     // Do not even resolve public announcement destinations for an 18+ post.
@@ -9003,6 +9037,7 @@ export const HELP_TOPICS = {
       '• /animexinplayers <catalog ID, title, or SB-ID> [Animexin page URL] — Imports only Dailymotion/Rumble players from an exact Animexin donghua page; unsafe hosts are rejected.',
       '• /releases — Refreshes and lists the latest Animexin episodes with their English Dailymotion/Rumble player counts and release IDs.',
       '• /releasedownload <release-id> <authorized MediaFire URL> — Adds your own MediaFire file beside the English players on a listed release.',
+      '• /checkanimexin — Force-checks every Animexin release now, attaches English players to existing posts, and publishes any episode that has no post yet. Replies with the Post IDs and page links it created or updated.',
       '• /imgapis — Shows all configured ImgBB API keys, upload/failure stats, and fallback poster.',
       '• /addimgapi <KEY> — Adds one or more ImgBB API keys to the rotation pool.',
       '• /removeimgapi <KEY> — Removes an ImgBB API key from the pool.',
@@ -9148,7 +9183,7 @@ export function publisherHelpOverviewText() {
     '• 📤 Publish & Drafts — /panel, /movie, /anime, /cartoon, /donghua, /kdrama, /series, /tv (/ott), /18db, /done, /cancel',
     '• 📦 Batch & Auto-Publish — /batch range imports, /batch1 (1 single catalog post & 1 poster only), /auto 90s quiet-window storage automation, /teststorage',
     '• ✏️ Edit Posts & Titles — /title, /titlebatch, /cateloguefix <1 to 50>, /category, /lang, /subtitles, /year, /genres, /description, /release, /status',
-    '• 🖼 Poster & Web Scrape — /scrape [SB-ID] <URL> (keeps file audio/subs, auto-updates category & announcement), /poster (/p, /imgdd), /animexinplayers, /imgapis',
+    '• 🖼 Poster & Web Scrape — /scrape [SB-ID] <URL> (keeps file audio/subs, auto-updates category & announcement), /poster (/p, /imgdd), /animexinplayers, /checkanimexin, /imgapis',
     '• 🗂 Remove File & Merge — /removefile (select post -> tap episode/file -> Go back or Remove), /cateloguefix <1 to 50>, /merge, /merge drop, /delete',
     '• ▶️ Watch Players & Quality — Watch page quality selector (144p/288p/544p/720p/1080p/4K Telegram link switching), /cmd, /players, /searchm',
     '• 🔄 Sync, Repair & Channels — /repair, /repair go, /sync, /sync go, /sync db, /addchannel, /channels, /removechannel',
@@ -10435,8 +10470,8 @@ export async function launchTelegramBot({ config, repository, subsPlease = null,
         let content = entry.content;
         if (reuseAge !== null && typeof repository.findContentByAdminId === 'function') {
           content = await Promise.resolve(repository.findContentByAdminId(entry.content.adminId)).catch(() => null) || entry.content;
-          const link = config ? getContentPageUrl(config, content) : null;
-          const caption = announcementCaption(content);
+          const link = config ? canonicalContentUrl(config, content) : null;
+          const caption = announcementCaption(content, { pageUrl: link });
           const behind = (Array.isArray(content.announcementRefs) ? content.announcementRefs : []).filter(
             (reference) => !announcementReferenceIsCurrent(reference, { caption, link, posterUrl: content.posterUrl || null })
               && !announcementRefIsDeferred(reference, { caption, link, posterUrl: content.posterUrl || null })

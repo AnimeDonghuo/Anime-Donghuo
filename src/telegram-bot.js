@@ -2,6 +2,7 @@ import { catalogById, catalogItems, safeMediaFireUrl } from './catalog.js';
 import { uploadImageToImgBB } from './image-hosting.js';
 import { constantTimeStringEqual } from './security.js';
 import { createAnimexinReleaseFeed } from './animexin-feed.js';
+import { checkAnimexin, checkAnimexinReport } from './animexin-check.js';
 import { extractAnimexinPlayers, normalizeTitle } from './posters.js';
 import { publicRelease } from './releases.js';
 import { mergeStreamingEntries, safeStreamingLink } from './server/services/streaming-service.js';
@@ -15,7 +16,7 @@ function parseCommand(message) {
     : (message.reply_to_message?.caption || message.reply_to_message?.text);
   if (typeof commandText !== 'string') return null;
   const firstLine = commandText.split(/\r?\n/, 1)[0].trim();
-  const match = firstLine.match(/^\/(poster|catalogposter|download|help|animexinplayers|releases|releasedownload)(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]*))?$/i);
+  const match = firstLine.match(/^\/(poster|catalogposter|download|help|animexinplayers|releases|releasedownload|checkanimexin)(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]*))?$/i);
   return match ? { command: match[1].toLowerCase(), args: (match[2] || '').trim() } : null;
 }
 
@@ -418,7 +419,7 @@ export function registerAppTelegramCommands(bot, { config, store, repository = n
     const message = ctx.message;
     if (!message) return next();
     const command = parseCommand(message);
-    if (!command || !['poster', 'catalogposter', 'download', 'animexinplayers', 'releases', 'releasedownload'].includes(command.command)) return next();
+    if (!command || !['poster', 'catalogposter', 'download', 'animexinplayers', 'releases', 'releasedownload', 'checkanimexin'].includes(command.command)) return next();
     const userId = String(ctx.from?.id || '');
     if (!config.telegramAdminIds.includes(userId)) return next();
     if (ctx.chat?.type !== 'private') {
@@ -431,6 +432,25 @@ export function registerAppTelegramCommands(bot, { config, store, repository = n
     }
     if (command.command === 'releases' || command.command === 'releasedownload') {
       await handleAnimexinReleases(ctx, { config, store, fetchImpl });
+      return;
+    }
+    if (command.command === 'checkanimexin') {
+      if (!config.animexinEnabled) {
+        await ctx.reply('Animexin is disabled by ANIMEXIN_ENABLED=false. Nothing was checked.');
+        return;
+      }
+      if (!repository) {
+        await ctx.reply('The publisher catalog is not available, so there is nowhere to publish Animexin posts. Check the MongoDB settings and try again.');
+        return;
+      }
+      await ctx.reply('Checking Animexin now. This reads the feed, every release page, and updates the website…');
+      try {
+        const result = await checkAnimexin({ config, store, repository, bot, publisherConfig, fetchImpl });
+        await ctx.reply(checkAnimexinReport(result));
+      } catch (error) {
+        console.error('[telegram] /checkanimexin failed:', error?.message || 'Unknown error');
+        await ctx.reply('The Animexin check could not finish. The website keeps the last stored posts; try again shortly.');
+      }
       return;
     }
     if (command.command === 'download') {

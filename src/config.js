@@ -157,6 +157,7 @@ export function createConfig(env = process.env) {
     production,
     port,
     siteUrl,
+    telegramBotUsername: env.TELEGRAM_BOT_USERNAME?.trim().replace(/^@/, '') || null,
     mongodbUri: env.MONGODB_URI || null,
     sessionSecret,
     emailLookupSecret,

@@ -110,6 +110,9 @@ export class MemoryStore {
       this.#releases.set(id, {
         ...release,
         id,
+        // Publication state belongs to the release row and must survive a refresh.
+        publishedAdminId: existing?.publishedAdminId || release.publishedAdminId || null,
+        publishedSlug: existing?.publishedSlug || release.publishedSlug || null,
         players: Array.isArray(release.players) ? release.players : [],
         scrapedDownloads: Array.isArray(release.downloads)
           ? release.downloads

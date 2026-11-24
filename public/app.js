@@ -588,32 +588,48 @@ async function renderHomeReleases() {
   releases.slice(0, 3).forEach((release) => container.append(makeReleaseCard(release)));
 }
 
-function renderHomeCollections(items) {
-  const sections = [
-    { selector: '#trending .cards', key: 'trending' },
-    { selector: '#donghua .cards', key: 'donghua' },
-    { selector: '#anime .cards', key: 'anime' },
-  ];
-  sections.forEach(({ selector, key }) => {
-    const grid = document.querySelector(selector);
+/**
+ * Every home shelf is built from the live catalogue. Previously the markup shipped
+ * six hardcoded posters per row and this function only patched artwork onto the
+ * cards it recognised, so a new post never changed the page until it happened to
+ * match one of those names.
+ */
+/** A failed catalogue request must not leave "Loading…" placeholders on screen. */
+function showHomeShelvesUnavailable() {
+  document.querySelectorAll('[data-shelf]').forEach((grid) => {
+    if (!grid.querySelector('.catalogue-empty')) return;
+    grid.replaceChildren(element('div', 'catalogue-empty', 'The catalogue could not be loaded right now. It will retry automatically.'));
+  });
+}
+
+function renderHomeShelves(items) {
+  const titles = Array.isArray(items) ? items : [];
+  const grids = new Map([...document.querySelectorAll('[data-shelf]')].map((grid) => [grid.dataset.shelf, grid]));
+  if (!grids.size) return;
+
+  const bySection = (key) => titles.filter((title) => title.sections?.includes(key)).slice(0, 6);
+  const newest = [...titles]
+    .sort((left, right) => (Date.parse(right.addedAt || '') || 0) - (Date.parse(left.addedAt || '') || 0))
+    .slice(0, 6);
+
+  const shelves = {
+    trending: bySection('trending').length ? bySection('trending') : titles.slice(0, 6),
+    donghua: titles.filter((title) => title.type === 'donghua').slice(0, 6),
+    anime: titles.filter((title) => title.type === 'anime').slice(0, 6),
+    latest: newest,
+  };
+
+  Object.entries(shelves).forEach(([key, rows]) => {
+    const grid = grids.get(key);
     if (!grid) return;
-    const titles = items.filter((title) => title.sections?.includes(key)).slice(0, 6);
-    const additions = [];
-    titles.forEach((title, index) => {
-      const existing = [...grid.querySelectorAll('.poster')].find((card) => {
-        const name = card.querySelector('.poster-title')?.textContent?.trim();
-        return name && titleByName(name)?.id === title.id;
-      });
-      if (existing) {
-        if (artworkUrl(title)) existing.replaceWith(createPosterCard(title, index));
-        return;
-      }
-      additions.push({ title, index });
-    });
-    additions.reverse().forEach(({ title, index }) => {
-      if (grid.children.length >= 6) grid.lastElementChild.remove();
-      grid.prepend(createPosterCard(title, index));
-    });
+    grid.replaceChildren();
+    if (!rows.length) {
+      grid.append(element('div', 'catalogue-empty', key === 'latest'
+        ? 'No posts yet. New Animexin releases appear here as soon as they publish.'
+        : 'Nothing in this shelf yet.'));
+      return;
+    }
+    rows.forEach((title, index) => grid.append(createPosterCard(title, index)));
   });
 }
 
@@ -1362,6 +1378,57 @@ function slugifyGenre(genre) {
   return genre.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
+/**
+ * The files this post actually carries: episodes uploaded through the Telegram bot
+ * and the MediaFire links the publisher registered. Delivery stays on Telegram, so
+ * every row is an outbound link rather than a proxied download.
+ */
+function makeDeliveryPanel(title) {
+  const choices = Array.isArray(title.fileChoices) ? title.fileChoices : [];
+  const hasDelivery = choices.length || title.deliveryUrl || title.telegramUrl;
+  if (!hasDelivery) return null;
+
+  const panel = element('section', 'dialog-note delivery-panel');
+  panel.append(element('strong', '', choices.length
+    ? `Files in this post (${choices.length})`
+    : 'Telegram delivery available'));
+  if (choices.length) {
+    const list = element('ul', 'delivery-list');
+    choices.forEach((choice) => {
+      const item = element('li', 'delivery-item');
+      const facts = [choice.quality, choice.size].filter((value) => value && value !== '0 B');
+      const link = element('a', 'delivery-link', choice.fileName || choice.label || `File ${choice.position}`);
+      const href = choice.telegramUrl || choice.deliveryUrl || title.telegramUrl;
+      if (href) {
+        link.href = href;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        item.append(link);
+      } else {
+        item.append(element('span', '', choice.fileName || choice.label || 'File'));
+      }
+      if (facts.length) item.append(element('small', '', ` · ${facts.join(' · ')}`));
+      list.append(item);
+    });
+    panel.append(list);
+  }
+  if (title.downloadUrl) {
+    const mirror = element('a', 'delivery-link', 'Owner-provided download (MediaFire)');
+    mirror.href = title.downloadUrl;
+    mirror.target = '_blank';
+    mirror.rel = 'noopener noreferrer';
+    panel.append(mirror);
+  } else if (title.telegramUrl) {
+    const open = element('a', 'delivery-link', 'Open delivery in Telegram');
+    open.href = title.telegramUrl;
+    open.target = '_blank';
+    open.rel = 'noopener noreferrer';
+    panel.append(open);
+  }
+  panel.append(element('small', '', 'Anime Donghua does not host, download, or proxy these files.'));
+  return panel;
+}
+
 function renderTitlePage(container, title) {
   pageHeader(container, title.title, title.type === 'donghua' ? 'Donghua title details' : 'Anime title details');
   const layout = element('div', 'title-page-layout');
@@ -1424,6 +1491,8 @@ function renderTitlePage(container, title) {
     note.append(document.createTextNode('No authorized stream is attached to this title. Anime Donghua does not host or proxy video.'));
   }
   copy.append(note);
+  const delivery = makeDeliveryPanel(title);
+  if (delivery) copy.append(delivery);
   const actions = element('div', 'dialog-actions');
   if (title.downloadUrl) {
     const download = element('a', 'dialog-button', 'Owner-provided download');
@@ -1838,6 +1907,12 @@ async function renderCurrentPage() {
     await renderPublishedCard(page, categoryCardMatch[2]);
     return;
   }
+  // A Post ID printed by the bot is a valid page address too.
+  const postIdMatch = path.match(/^\/(?:post|p)\/([A-Za-z0-9][A-Za-z0-9-]{1,39})$/);
+  if (postIdMatch) {
+    await renderPublishedCard(page, postIdMatch[1]);
+    return;
+  }
 
   if (path.startsWith('/title/') || path.startsWith('/watch/')) {
     const isWatchPage = path.startsWith('/watch/');
@@ -1894,13 +1969,14 @@ async function refreshCatalog() {
   try {
     const data = await request('/api/catalog?limit=48&sort=newest', { cache: 'no-store' });
     state.catalog = new Map(data.items.map((item) => [item.id, item]));
-    renderHomeCollections(data.items);
+    renderHomeShelves(data.items);
     renderHomeUpdates(data.items);
     setFeaturedTitles(data.items);
     if (normalizedPath() === '/') void renderHomeReleases();
     if (normalizedPath() !== '/') await renderCurrentPage();
   } catch {
     // Keep the last good catalogue visible when a refresh is temporarily unavailable.
+    showHomeShelvesUnavailable();
   }
 }
 
@@ -1911,12 +1987,12 @@ async function initialize() {
   const catalogTask = request('/api/catalog?limit=48&sort=newest')
     .then((data) => {
       state.catalog = new Map(data.items.map((item) => [item.id, item]));
-      renderHomeCollections(data.items);
+      renderHomeShelves(data.items);
       renderHomeUpdates(data.items);
       setFeaturedTitles(data.items);
       if (normalizedPath() === '/') void renderHomeReleases();
     })
-    .catch(() => {});
+    .catch(() => { showHomeShelvesUnavailable(); });
   const csrfTask = csrfToken().catch(() => {});
   const userTask = request('/api/auth/me')
     .then((data) => { state.user = data.user; })

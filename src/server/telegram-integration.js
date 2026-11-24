@@ -32,6 +32,14 @@ export function createPublisherConfig(appConfig, env = process.env) {
     config.siteUrl = appConfig.siteUrl;
   }
 
+  // Keep the Telegram username reachable from the app config too: the website
+  // serializes publisher cards with the app config, and a delivery button needs
+  // this name.
+  config.telegramBotUsername = appConfig.telegramBotUsername
+    || config.telegram.botUsername
+    || env.TELEGRAM_BOT_USERNAME?.trim().replace(/^@/, '')
+    || null;
+
   config.environment = appConfig.nodeEnv;
   config.port = appConfig.port;
   config.mongodbUri = appConfig.mongodbUri || '';

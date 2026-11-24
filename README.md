@@ -89,6 +89,10 @@ New episodes are also mirrored into the publisher catalog automatically: each En
 
 Admins can review and extend the list from a private chat with the bot: `/releases` refreshes and prints the current release IDs with their English player counts, and `/releasedownload <release-id> <https://www.mediafire.com/file/...>` attaches an authorized MediaFire file you own or may distribute. Admin-added downloads survive later refreshes; scraped MediaFire links are shown only when the release page itself links them.
 
+`/checkanimexin` runs that reconciliation on demand instead of waiting for the schedule: it reads the feed, every release page, attaches the approved English Dailymotion/Rumble players to a post that already exists for the episode (no duplicate card), and publishes any episode that has no post yet. It replies with the Post IDs and the `/donghua/<slug>` page it created or updated.
+
+The home page is rendered from the live catalogue. `/api/catalog` supplies the hero, the Featured/Donghua/Anime shelves, and the latest-posts row, so a post published through the bot appears there on the next refresh without a redeploy. Only `anime` and `donghua` (plus their movie formats) are exposed, and an unpublished draft is never served — not in a shelf, not by slug, and not by Post ID.
+
 In production, poster synchronization runs on startup unless `POSTER_SYNC_ENABLED=false`. In development/test it is off unless `POSTER_SYNC_ENABLED=true`. Resolved artwork and admin overrides are persisted in the `AnimeDonghuaTitleMedia` MongoDB collection. With `IMGBB_API_KEY`, fetched posters are uploaded to ImgBB and the cached URL is stored; without it, the app keeps the provider image URL when it is on the approved host list. The linked [AnimeDonghuo/imgtolink bot](https://github.com/AnimeDonghuo/imgtolink/tree/arena/01a052c3-imgtolink) uses ImgBB, not a separate ImgDB API. This app follows its official ImgBB upload flow only; its legacy proxy and keyless third-party fallback are intentionally not used.
 
 Optional Telegram setup uses deployment secrets/environment variables:

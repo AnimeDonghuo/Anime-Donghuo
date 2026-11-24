@@ -33,7 +33,7 @@ footer{padding:25px 4.5%;border-top:1px solid #ffffff12;color:#777b98;text-align
 @media(max-width:900px){nav{gap:14px;margin-left:5px}.cards{grid-template-columns:repeat(4,minmax(0,1fr))}.quick{grid-template-columns:repeat(3,1fr)}.art{height:190px}.updates{grid-template-columns:1fr 1fr}}
 @media(max-width:600px){header{height:64px;padding:0 17px;gap:10px}.logo{font-size:21px}nav{display:none}.header-actions{gap:12px}.hero{margin:0;min-height:490px;border-radius:0 0 22px 22px;padding:35px 22px 30px;align-items:flex-end}.hero-art{width:100%;height:65%;right:-20%;top:0;opacity:.65}.hero-copy{max-width:100%}.hero h1{font-size:49px;letter-spacing:-2px}.hero p{font-size:13px;max-width:320px}.quick{margin:17px 16px 27px;gap:9px;grid-template-columns:repeat(3,1fr)}.quick a{padding:13px 5px;font-size:11px}.quick .qicon{font-size:22px}section{margin:25px 16px 30px}.section-head h2{font-size:18px}.cards{grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}.art{height:155px;padding:9px}.art-label{font-size:15px}.poster-info{padding:8px}.poster-title{font-size:12px}.poster-sub{font-size:10px}.rank{font-size:10px;padding:4px 6px}.continue{grid-template-columns:1fr}.thumb{width:100px;height:70px}.updates{grid-template-columns:1fr}.update-art{width:70px;height:65px}.bottom{display:flex;position:fixed;bottom:0;left:0;right:0;z-index:20;justify-content:space-around;padding:10px 5px calc(10px + env(safe-area-inset-bottom));background:#0c0e1df2;border-top:1px solid #34304f;backdrop-filter:blur(18px)}.bottom a{color:#aaaac4;text-decoration:none;text-align:center;font-size:10px;font-weight:650}.bottom a span{display:block;font-size:20px;margin-bottom:3px}.bottom a.active{color:var(--blue)}footer{padding-bottom:105px}}
 </style>
-<link rel="stylesheet" href="/app.css?v=anime-donghua-v3">
+<link rel="stylesheet" href="/app.css?v=anime-donghua-v5">
 <style>
 .logo,.logo:visited,.logo:hover{color:var(--text)!important;text-decoration:none!important}
 .logo{display:flex;align-items:center;gap:4px}
@@ -53,14 +53,14 @@ footer{padding:25px 4.5%;border-top:1px solid #ffffff12;color:#777b98;text-align
 </header>
 
 <main id="home">
-  <div class="hero">
-    <div class="hero-art"><div class="hero-orb" hidden></div><img class="hero-image" src="/assets/anime-donghua-blue-dragon.png" alt="Blue dragon and hero artwork" fetchpriority="high"></div>
+  <div class="hero" data-live="featured">
+    <div class="hero-art"><div class="hero-orb"></div></div>
     <div class="hero-copy">
       <div class="eyebrow">✦ FEATURED <span class="rating" hidden></span></div>
-      <h1>Perfect<br>World</h1>
-      <div class="tags"><span class="tag">Donghua</span><span class="tag">Action</span><span class="tag">Fantasy</span><span class="tag">Cultivation</span></div>
-      <p>Born into a world of ancient powers, one young hero sets out on a journey beyond the limits of destiny.</p>
-      <div class="actions"><button class="btn primary" data-action="watch-title" data-id="perfect-world">▶ &nbsp; Playback Status</button><button class="btn" data-action="toggle-favorite" data-id="perfect-world">＋ &nbsp; My List</button></div>
+      <h1></h1>
+      <div class="tags"></div>
+      <p></p>
+      <div class="actions"><button class="btn primary" data-action="watch-title" data-id="">▶ &nbsp; Playback Status</button><button class="btn" data-action="toggle-favorite" data-id="">＋ &nbsp; My List</button></div>
       <div class="hero-dots" role="group" aria-label="Featured titles"></div>
     </div>
   </div>
@@ -85,38 +85,22 @@ footer{padding:25px 4.5%;border-top:1px solid #ffffff12;color:#777b98;text-align
 
   <section id="trending">
     <div class="section-head"><h2>✦ &nbsp;Featured Titles</h2><a class="see" href="/trending">See all →</a></div>
-    <div class="cards">
-      <article class="poster"><div class="art" style="--c1:#164b78;--c2:#11132c;--glow:#54bfff"><div class="art-label">PERFECT<br>WORLD</div></div><div class="poster-info"><div class="poster-title">Perfect World</div><div class="poster-sub">Donghua · Ongoing</div></div></article>
-      <article class="poster"><div class="art" style="--c1:#9b352c;--c2:#211326;--glow:#ff7754"><div class="art-label">BTTH</div></div><div class="poster-info"><div class="poster-title">Battle Through the Heavens</div><div class="poster-sub">Donghua · Ongoing</div></div></article>
-      <article class="poster"><div class="art" style="--c1:#155c91;--c2:#28134d;--glow:#65caff"><div class="art-label">SOUL<br>LAND</div></div><div class="poster-info"><div class="poster-title">Soul Land</div><div class="poster-sub">Donghua · Completed</div></div></article>
-      <article class="poster"><div class="art" style="--c1:#e49b34;--c2:#713326;--glow:#ffe18b"><div class="art-label">ONE<br>PIECE</div></div><div class="poster-info"><div class="poster-title">One Piece</div><div class="poster-sub">Anime · Ongoing</div></div></article>
-      <article class="poster"><div class="art" style="--c1:#7e68b8;--c2:#17172f;--glow:#d4c4ff"><div class="art-label">JUJUTSU<br>KAISEN</div></div><div class="poster-info"><div class="poster-title">Jujutsu Kaisen</div><div class="poster-sub">Anime · Action</div></div></article>
-      <article class="poster"><div class="art" style="--c1:#a93231;--c2:#171329;--glow:#ff625e"><div class="art-label">DEMON<br>SLAYER</div></div><div class="poster-info"><div class="poster-title">Demon Slayer</div><div class="poster-sub">Anime · Fantasy</div></div></article>
-    </div>
+    <div class="cards" data-shelf="trending"><div class="catalogue-empty">Loading the catalogue…</div></div>
   </section>
 
   <section id="donghua">
     <div class="section-head"><h2>🐉 &nbsp;Explore Donghua</h2><a class="see" href="/donghua">View all →</a></div>
-    <div class="cards">
-      <article class="poster"><div class="art" style="--c1:#184f7c;--c2:#11142c;--glow:#53caff"><div class="art-label">THRONE<br>OF SEAL</div></div><div class="poster-info"><div class="poster-title">Throne of Seal</div><div class="poster-sub">Donghua · Ongoing</div></div></article>
-      <article class="poster"><div class="art" style="--c1:#78432c;--c2:#171329;--glow:#ffba6a"><div class="art-label">APOTHEOSIS</div></div><div class="poster-info"><div class="poster-title">Apotheosis</div><div class="poster-sub">Donghua · Ongoing</div></div></article>
-      <article class="poster"><div class="art" style="--c1:#572a80;--c2:#12152d;--glow:#b18bff"><div class="art-label">A RECORD<br>OF MORTAL</div></div><div class="poster-info"><div class="poster-title">A Record of a Mortal's Journey</div><div class="poster-sub">Donghua · Cultivation</div></div></article>
-      <article class="poster"><div class="art" style="--c1:#286b6b;--c2:#11172b;--glow:#6effd6"><div class="art-label">THE DAILY<br>LIFE</div></div><div class="poster-info"><div class="poster-title">The Daily Life of the Immortal King</div><div class="poster-sub">Donghua · Comedy</div></div></article>
-      <article class="poster"><div class="art" style="--c1:#863d49;--c2:#171329;--glow:#ff9aa9"><div class="art-label">SOUL<br>LAND 2</div></div><div class="poster-info"><div class="poster-title">Soul Land II</div><div class="poster-sub">Donghua · Ongoing</div></div></article>
-      <article class="poster"><div class="art" style="--c1:#35518a;--c2:#111329;--glow:#8bbcff"><div class="art-label">SWALLOWED<br>STAR</div></div><div class="poster-info"><div class="poster-title">Swallowed Star</div><div class="poster-sub">Donghua · Sci-Fi</div></div></article>
-    </div>
+    <div class="cards" data-shelf="donghua"><div class="catalogue-empty">Loading donghua…</div></div>
   </section>
 
   <section id="anime">
     <div class="section-head"><h2>⚡ &nbsp;Explore Anime</h2><a class="see" href="/anime">View all →</a></div>
-    <div class="cards">
-      <article class="poster"><div class="art" style="--c1:#a33d32;--c2:#18152b;--glow:#ff826d"><div class="art-label">ATTACK ON<br>TITAN</div></div><div class="poster-info"><div class="poster-title">Attack on Titan</div><div class="poster-sub">Anime · Action</div></div></article>
-      <article class="poster"><div class="art" style="--c1:#364c8b;--c2:#11152b;--glow:#88aaff"><div class="art-label">SOLO<br>LEVELING</div></div><div class="poster-info"><div class="poster-title">Solo Leveling</div><div class="poster-sub">Anime · Fantasy</div></div></article>
-      <article class="poster"><div class="art" style="--c1:#9c7c48;--c2:#23162c;--glow:#f6cf87"><div class="art-label">BLEACH</div></div><div class="poster-info"><div class="poster-title">Bleach: TYBW</div><div class="poster-sub">Anime · Ongoing</div></div></article>
-      <article class="poster"><div class="art" style="--c1:#6b3c87;--c2:#171329;--glow:#d0a0ff"><div class="art-label">CHAINSAW<br>MAN</div></div><div class="poster-info"><div class="poster-title">Chainsaw Man</div><div class="poster-sub">Anime · Action</div></div></article>
-      <article class="poster"><div class="art" style="--c1:#287b74;--c2:#15142c;--glow:#8affdb"><div class="art-label">HAIKYU!!</div></div><div class="poster-info"><div class="poster-title">Haikyu!!</div><div class="poster-sub">Anime · Sports</div></div></article>
-      <article class="poster"><div class="art" style="--c1:#b14d35;--c2:#1c172c;--glow:#ffc16c"><div class="art-label">SPY ×<br>FAMILY</div></div><div class="poster-info"><div class="poster-title">Spy × Family</div><div class="poster-sub">Anime · Comedy</div></div></article>
-    </div>
+    <div class="cards" data-shelf="anime"><div class="catalogue-empty">Loading anime…</div></div>
+  </section>
+
+  <section id="latest-posts">
+    <div class="section-head"><h2>🆕 &nbsp;Latest Posts</h2><a class="see" id="latestPostsSeeAll" href="/updates">See all →</a></div>
+    <div class="cards" data-shelf="latest"><div class="catalogue-empty">Loading the newest posts…</div></div>
   </section>
 
   <section id="updates">
@@ -135,6 +119,6 @@ footer{padding:25px 4.5%;border-top:1px solid #ffffff12;color:#777b98;text-align
 </nav>
 <div class="search-panel" id="searchPanel"><button class="close-search" type="button" aria-label="Close search">✕</button><h2 id="searchHeading">Find your next series</h2><input id="searchInput" type="search" aria-label="Search the Anime Donghua catalogue" placeholder="Search anime, donghua, genres..."><div id="searchResults" style="margin-top:20px;color:#c8c5dd"></div></div>
 <div class="toast" id="toast"></div>
-<script src="/app.js?v=anime-donghua-v3" defer></script>
+<script src="/app.js?v=anime-donghua-v5" defer></script>
 </body>
 </html>
