@@ -4,6 +4,7 @@ import { CATEGORY_IDS, categoryDetails, cleanText, makeReference, makeShareCode,
 import { cleanMediaName, detectMediaQuality, detectUploadLanguages, detectUploadSubtitleLanguages, fileReplacementKey, hasEpisodeRange, repairEpisodeGaps, seasonPackOf, stripTelegramAttribution, summarizeEpisodes, summarizeSubtitleLanguages, summarizeUploadLanguages } from './services/episode-service.js';
 import { mergeContentStreamWithTelegramFiles } from './services/streaming-service.js';
 import { normalizePlayerApiSettings } from './services/player-api-service.js';
+import { normalizeScheduleTime, resolveScheduleDay, scheduleDayIndex, scheduleEntryKey } from '../schedule.js';
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 48;
 const REQUEST_SELECTION_TTL_MS = 1000 * 60 * 60 * 6;
@@ -1105,6 +1106,34 @@ function removeFileFromContentRecord(content, { storageMessageId = null, fileInd
   };
 }
 
+function normalizeScheduleEntry(entry = {}, { updatedBy = null, now = new Date().toISOString() } = {}) {
+  const day = resolveScheduleDay(entry.day);
+  const title = cleanText(entry.title, 120);
+  if (!day || !title) return null;
+  const time = normalizeScheduleTime(entry.time);
+  const key = scheduleEntryKey(day, title);
+  const timezone = typeof entry.timezone === 'string' && /^(?:[A-Z]{2,5}|GMT\+?\d{1,2}(?::\d{2})?|UTC\+?\d{1,2}(?::\d{2})?)$/.test(entry.timezone)
+    ? entry.timezone
+    : null;
+  return {
+    key,
+    day,
+    title,
+    time: time?.time || null,
+    timezone,
+    updatedAt: now,
+    updatedBy: updatedBy === null || updatedBy === undefined ? null : String(updatedBy)
+  };
+}
+
+function sortScheduleEntries(entries) {
+  return [...entries].sort((left, right) => (
+    scheduleDayIndex(left.day) - scheduleDayIndex(right.day)
+    || String(left.time || '99:99').localeCompare(String(right.time || '99:99'))
+    || String(left.title).localeCompare(String(right.title))
+  ));
+}
+
 export class MemoryCatalogRepository {
   constructor(seed = demoContent) {
     this.kind = 'memory';
@@ -1139,6 +1168,9 @@ export class MemoryCatalogRepository {
     this.maintenanceSettings = { enabled: false, updatedAt: null, updatedBy: null };
     this.imgbbSettings = { keys: [], stats: {}, fallbackPosterUrl: null, updatedAt: null };
     this.playerApiSettings = { apis: {}, updatedAt: null, updatedBy: null };
+    // The weekly schedule is publisher-owned data, not content: it survives a
+    // restart and is only removed by /removeschedule.
+    this.scheduleEntries = new Map();
   }
 
   async init() {}
@@ -2087,6 +2119,40 @@ export class MemoryCatalogRepository {
     return channel ? clone(channel) : null;
   }
 
+  async saveScheduleEntries(entries, { updatedBy = null, now = new Date().toISOString() } = {}) {
+    const saved = [];
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      const normalized = normalizeScheduleEntry(entry, { updatedBy, now });
+      if (!normalized) continue;
+      this.scheduleEntries.set(normalized.key, normalized);
+      saved.push(clone(normalized));
+    }
+    return saved;
+  }
+
+  async listScheduleEntries() {
+    return sortScheduleEntries([...this.scheduleEntries.values()]).map(clone);
+  }
+
+  async removeScheduleEntries({ day = null, title = null } = {}) {
+    const wantedDay = day ? resolveScheduleDay(day) : null;
+    if (!wantedDay) return [];
+    const removed = [];
+    for (const [key, entry] of [...this.scheduleEntries.entries()]) {
+      if (entry.day !== wantedDay) continue;
+      if (title && scheduleEntryKey(entry.day, title) !== key) continue;
+      this.scheduleEntries.delete(key);
+      removed.push(clone(entry));
+    }
+    return sortScheduleEntries(removed);
+  }
+
+  async clearScheduleEntries() {
+    const removed = [...this.scheduleEntries.values()];
+    this.scheduleEntries.clear();
+    return sortScheduleEntries(removed).map(clone);
+  }
+
   async getAutoPublishSettings() {
     return clone(this.autoPublishSettings);
   }
@@ -2340,6 +2406,7 @@ export class MongoCatalogRepository {
     this.automationSettings = db.collection('automation_settings');
     this.backupSettings = db.collection('backup_settings');
     this.subsPleaseReleases = db.collection('subsplease_releases');
+    this.scheduleEntries = db.collection('schedule_entries');
     this.subsPleaseAliases = db.collection('subsplease_aliases');
     this._maintenanceActive = undefined;
   }
@@ -2381,7 +2448,9 @@ export class MongoCatalogRepository {
       this.siteVisitors.createIndex({ lastSeenAt: -1 }),
       this.siteVisits.createIndex({ visitedAt: -1 }),
       this.siteVisits.createIndex({ visitorId: 1, visitedAt: -1 }),
-      this.announcementChannels.createIndex({ channelId: 1 }, { unique: true })
+      this.announcementChannels.createIndex({ channelId: 1 }, { unique: true }),
+      this.scheduleEntries.createIndex({ key: 1 }, { unique: true }),
+      this.scheduleEntries.createIndex({ dayOrder: 1, time: 1 })
     ]);
     try {
       const maint = await this.getMaintenanceSettings();
@@ -3456,6 +3525,46 @@ export class MongoCatalogRepository {
       { channelId: String(channelId) },
       { includeResultMetadata: false }
     );
+  }
+
+  async saveScheduleEntries(entries, { updatedBy = null, now = new Date().toISOString() } = {}) {
+    const saved = [];
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      const normalized = normalizeScheduleEntry(entry, { updatedBy, now });
+      if (!normalized) continue;
+      await this.scheduleEntries.updateOne(
+        { key: normalized.key },
+        { $set: { ...normalized, dayOrder: scheduleDayIndex(normalized.day) } },
+        { upsert: true }
+      );
+      saved.push(normalized);
+    }
+    return saved;
+  }
+
+  async listScheduleEntries() {
+    const rows = await this.scheduleEntries.find({}).sort({ dayOrder: 1, time: 1, title: 1 }).toArray();
+    return rows.map((row) => {
+      const { _id, dayOrder, ...entry } = row;
+      return entry;
+    });
+  }
+
+  async removeScheduleEntries({ day = null, title = null } = {}) {
+    const wantedDay = day ? resolveScheduleDay(day) : null;
+    if (!wantedDay) return [];
+    const filter = title ? { key: scheduleEntryKey(wantedDay, title) } : { day: wantedDay };
+    const rows = await this.scheduleEntries.find(filter).toArray();
+    if (!rows.length) return [];
+    await this.scheduleEntries.deleteMany(filter);
+    return sortScheduleEntries(rows.map(({ _id, dayOrder, ...entry }) => entry));
+  }
+
+  async clearScheduleEntries() {
+    const rows = await this.scheduleEntries.find({}).toArray();
+    if (!rows.length) return [];
+    await this.scheduleEntries.deleteMany({});
+    return sortScheduleEntries(rows.map(({ _id, dayOrder, ...entry }) => entry));
   }
 
   async getAutoPublishSettings() {

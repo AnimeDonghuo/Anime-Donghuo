@@ -9,6 +9,7 @@ import { createAnimexinReleaseFeed } from './animexin-feed.js';
 import { publicRelease, refreshAnimexinReleases } from './releases.js';
 import { toPublicContent } from './server/index.js';
 import { createTelegramWebhookHandler } from './telegram-bot.js';
+import { SCHEDULE_DAYS } from './schedule.js';
 import {
   constantTimeStringEqual,
   createSessionToken,
@@ -538,6 +539,47 @@ export function createApp({ store, config, fetchImpl = fetch, releaseFeed = null
       offset,
       limit,
     });
+  });
+
+  /**
+   * The weekly schedule the publisher writes with /schedule in Telegram.
+   *
+   * It is served on its own endpoint because it is editorial data, not a title:
+   * a donghua can be scheduled before it has a post, and removing it must not
+   * touch the catalogue.
+   */
+  app.get('/api/schedule', async (_request, response) => {
+    noStore(response);
+    if (!publisher || typeof publisher.listScheduleEntries !== 'function') {
+      return response.json({ days: [], entries: [], updatedAt: null });
+    }
+    try {
+      const entries = await publisher.listScheduleEntries();
+      const days = SCHEDULE_DAYS.map((day) => ({
+        day,
+        entries: entries
+          .filter((entry) => entry.day === day)
+          .map((entry) => ({
+            id: entry.key,
+            title: entry.title,
+            time: entry.time,
+            ...(entry.timezone ? { timezone: entry.timezone } : {}),
+            ...(entry.postId ? { postId: entry.postId } : {}),
+            ...(entry.slug ? { slug: entry.slug } : {}),
+          })),
+      })).filter((group) => group.entries.length);
+      return response.json({
+        days,
+        entries: entries.length,
+        updatedAt: entries.reduce((latest, entry) => {
+          const value = Date.parse(entry.updatedAt || '');
+          const best = Date.parse(latest || '');
+          return Number.isFinite(value) && (!Number.isFinite(best) || value > best) ? entry.updatedAt : latest;
+        }, null),
+      });
+    } catch {
+      return response.json({ days: [], entries: 0, updatedAt: null });
+    }
   });
 
   app.get('/api/catalog/:id', async (request, response) => {

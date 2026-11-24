@@ -7,8 +7,17 @@ import { extractAnimexinPlayers, normalizeTitle } from './posters.js';
 import { publicRelease } from './releases.js';
 import { normalizeDownloads } from './server/catalog.repository.js';
 import { mergeStreamingEntries, safeStreamingLink } from './server/services/streaming-service.js';
+import { formatScheduleReport, formatScheduleTime, parseScheduleMessage, SCHEDULE_USAGE_TEXT, resolveScheduleDay } from './schedule.js';
 
 const maxImageBytes = 10 * 1024 * 1024;
+
+// Commands this module answers itself. They run before the publisher command
+// set in src/server/services/telegram-bot.js and share its admin allowlist.
+const SCHEDULE_APPS_COMMANDS = [
+  'poster', 'catalogposter', 'download', 'postdownload',
+  'animexinplayers', 'releases', 'releasedownload', 'checkanimexin',
+  'schedule', 'removeschedule', 'removeschedules',
+];
 
 function parseCommand(message) {
   const text = typeof message.caption === 'string' ? message.caption : message.text;
@@ -16,9 +25,26 @@ function parseCommand(message) {
     ? text
     : (message.reply_to_message?.caption || message.reply_to_message?.text);
   if (typeof commandText !== 'string') return null;
-  const firstLine = commandText.split(/\r?\n/, 1)[0].trim();
-  const match = firstLine.match(/^\/(poster|catalogposter|download|postdownload|help|animexinplayers|releases|releasedownload|checkanimexin)(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]*))?$/i);
-  return match ? { command: match[1].toLowerCase(), args: (match[2] || '').trim() } : null;
+  const lines = commandText.split(/\r?\n/);
+  const firstLine = lines[0].trim();
+  // /schedule is written as the day on one line and one donghua per line after
+  // it, so that command needs the whole message; every other command reads only
+  // its first line.
+  if (/^\/schedule(?:@[A-Za-z0-9_]+)?\b/i.test(firstLine)) {
+    const scheduleMatch = commandText.match(/^\/schedule(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]*))?$/i);
+    if (!scheduleMatch) return null;
+    const args = (scheduleMatch[1] || '').trim();
+    // A multi-line body is lines[1..]; fold it back into the argument so the
+    // day line and its entries stay together.
+    const body = args.includes('\n') ? args : [args, ...lines.slice(1)].filter(Boolean).join('\n');
+    return { command: 'schedule', args: body.trim() };
+  }
+  const match = firstLine.match(/^\/(poster|catalogposter|download|postdownload|help|animexinplayers|releases|releasedownload|checkanimexin|schedule|removeschedule|removeschedules)(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]*))?$/i);
+  if (match) return { command: match[1].toLowerCase(), args: (match[2] || '').trim() };
+  // "/remove schedule Monday" is how the command is usually remembered, so the
+  // two-word spelling answers to the same handler.
+  const removeSchedule = firstLine.match(/^\/remove(?:d)?\s+schedules?(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]*))?$/i);
+  return removeSchedule ? { command: 'removeschedule', args: (removeSchedule[1] || '').trim() } : null;
 }
 
 function telegramImageFileId(message) {
@@ -413,6 +439,137 @@ async function handleAnimexinReleases(ctx, { config, store, fetchImpl }) {
   return true;
 }
 
+/**
+ * `/schedule` — the weekly schedule, stored until the publisher removes it.
+ *
+ * The store is the publisher catalog, not the release feed, because a schedule
+ * is an editorial promise ("Swallowed Star airs Mondays at 20:30"), and it must
+ * survive a redeploy even when Animexin cannot be read.
+ */
+async function handleScheduleCommand(ctx, { command, repository, publisherConfig }) {
+  if (!repository || typeof repository.listScheduleEntries !== 'function') {
+    await ctx.reply('The publisher catalog is not available, so the schedule cannot be saved right now. Check the MongoDB settings and try again.');
+    return;
+  }
+  const args = String(command.args || '').trim();
+  const normalized = args.toLowerCase();
+
+  if (!args) {
+    await ctx.reply(SCHEDULE_USAGE_TEXT);
+    return;
+  }
+
+  if (/^(?:list|show|view)$/.test(normalized) || /^list\s+/.test(normalized)) {
+    const entries = await repository.listScheduleEntries();
+    const siteUrl = publisherConfig?.siteUrl || '';
+    await ctx.reply(entries.length
+      ? `Weekly schedule (${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}):\n\n${formatScheduleReport(entries, { siteUrl })}`
+      : 'No schedule entries are saved yet. Send /schedule Monday and then one donghua per line with its time.');
+    return;
+  }
+
+  if (/^(?:remove|removeschedule|delete|del)\b/.test(normalized)) {
+    await handleRemoveScheduleCommand(ctx, {
+      command: { args: args.replace(/^(?:remove|removeschedule|delete|del)\b\s*/i, '') },
+      repository,
+    });
+    return;
+  }
+
+  if (/^(?:clear|reset|remove all|delete all|all)$/.test(normalized)) {
+    const removed = await repository.clearScheduleEntries();
+    await ctx.reply(removed.length
+      ? `Removed all ${removed.length} schedule entr${removed.length === 1 ? 'y' : 'ies'}. The schedule page is now empty.`
+      : 'There was nothing in the schedule to clear.');
+    return;
+  }
+
+  const parsed = parseScheduleMessage(args);
+  if (!parsed.entries.length) {
+    await ctx.reply([
+      ...parsed.errors,
+      '',
+      'Send the day first, then one donghua per line:',
+      '/schedule Monday',
+      'Battle Through The Heavens 19:00',
+      'Swallowed Star 20:30',
+    ].join('\n'));
+    return;
+  }
+
+  const saved = await repository.saveScheduleEntries(
+    parsed.entries,
+    { updatedBy: String(ctx.from?.id || '') || null }
+  );
+  if (!saved.length) {
+    await ctx.reply('Those schedule entries could not be saved. Nothing was changed.');
+    return;
+  }
+
+  const days = [...new Set(saved.map((entry) => entry.day))];
+  const all = await repository.listScheduleEntries();
+  const siteUrl = publisherConfig?.siteUrl || '';
+  const dayLabel = days.length === 1 ? days[0] : `${days.slice(0, -1).join(', ')} and ${days.at(-1)}`;
+  await ctx.reply([
+    `Saved ${saved.length} ${dayLabel} entr${saved.length === 1 ? 'y' : 'ies'} — permanent until you remove it.`,
+    '',
+    formatScheduleReport(saved.filter((entry) => days.includes(entry.day))),
+    ...(parsed.errors.length ? ['', `Skipped ${parsed.errors.length} line${parsed.errors.length === 1 ? '' : 's'}:`, ...parsed.errors] : []),
+    '',
+    `${all.length} entr${all.length === 1 ? 'y' : 'ies'} in the week so far.`,
+    ...(siteUrl ? [siteUrl.replace(/\/$/, '') + '/schedule'] : []),
+  ].join('\n').replace(/\n\n\n+/g, '\n\n'));
+}
+
+/** `/removeschedule <day> [donghua name]` or `/removeschedule all`. */
+async function handleRemoveScheduleCommand(ctx, { command, repository }) {
+  if (!repository || typeof repository.removeScheduleEntries !== 'function') {
+    await ctx.reply('The publisher catalog is not available, so the schedule cannot be changed right now.');
+    return;
+  }
+  const args = String(command.args || '').trim();
+  if (!args) {
+    await ctx.reply([
+      'Usage:',
+      '/removeschedule Monday — clears that whole day',
+      '/removeschedule Monday Swallowed Star — removes one donghua from that day',
+      '/removeschedule all — clears the whole week',
+      '',
+      'Send /schedule list to see what is saved.',
+    ].join('\n'));
+    return;
+  }
+  const [first, ...rest] = args.split(/\s+/);
+  if (resolveScheduleDay(first)) {
+    const day = resolveScheduleDay(first);
+    const title = rest.join(' ').trim();
+    if (title && /^(?:all|every)$/i.test(title)) {
+      const removed = await repository.removeScheduleEntries({ day });
+      await ctx.reply(removed.length
+        ? `Removed ${removed.length} ${day} entr${removed.length === 1 ? 'y' : 'ies'}.`
+        : `There was nothing saved for ${day}.`);
+      return;
+    }
+    const removed = await repository.removeScheduleEntries({ day, title: title || null });
+    if (!removed.length) {
+      await ctx.reply(title
+        ? `No ${day} schedule entry matched “${title}”. Send /schedule list to see the exact names.`
+        : `There was nothing saved for ${day}.`);
+      return;
+    }
+    await ctx.reply(`Removed ${removed.length} ${day} entr${removed.length === 1 ? 'y' : 'ies'}:\n${removed.map((entry) => `• ${entry.title}${entry.time ? ` — ${formatScheduleTime(entry.time, entry.timezone)}` : ''}`).join('\n')}`);
+    return;
+  }
+  if (/^(?:all|everything|week|clear|reset)$/i.test(first)) {
+    const removed = await repository.clearScheduleEntries();
+    await ctx.reply(removed.length
+      ? `Removed all ${removed.length} schedule entr${removed.length === 1 ? 'y' : 'ies'}.`
+      : 'There was nothing in the schedule to clear.');
+    return;
+  }
+  await ctx.reply(`“${first}” is not a day. Use /removeschedule Monday, /removeschedule Monday Swallowed Star, or /removeschedule all.`);
+}
+
 /** Register the existing static-catalog admin tools and the Animexin player importer on Telegraf. */
 export function registerAppTelegramCommands(bot, { config, store, repository = null, publisherConfig = null, fetchImpl = fetch } = {}) {
   if (!bot || !config || !store) throw new Error('Telegram command registration requires a bot, app config, and store.');
@@ -420,11 +577,19 @@ export function registerAppTelegramCommands(bot, { config, store, repository = n
     const message = ctx.message;
     if (!message) return next();
     const command = parseCommand(message);
-    if (!command || !['poster', 'catalogposter', 'download', 'postdownload', 'animexinplayers', 'releases', 'releasedownload', 'checkanimexin'].includes(command.command)) return next();
+    if (!command || !SCHEDULE_APPS_COMMANDS.includes(command.command)) return next();
     const userId = String(ctx.from?.id || '');
     if (!config.telegramAdminIds.includes(userId)) return next();
     if (ctx.chat?.type !== 'private') {
       await ctx.reply('Use the bot in a private chat to manage the catalog.');
+      return;
+    }
+    if (command.command === 'schedule') {
+      await handleScheduleCommand(ctx, { command, repository, publisherConfig });
+      return;
+    }
+    if (command.command === 'removeschedule' || command.command === 'removeschedules') {
+      await handleRemoveScheduleCommand(ctx, { command, repository });
       return;
     }
     if (command.command === 'animexinplayers') {

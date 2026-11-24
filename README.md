@@ -99,6 +99,23 @@ Every catalogue card now carries its own Watch button (`▶ Watch N episodes`), 
 
 `/checkanimexin` runs that reconciliation on demand instead of waiting for the schedule: it reads the feed, every release page, attaches the approved English Dailymotion/Rumble players to a post that already exists for the episode (no duplicate card), and publishes any episode that has no post yet. It replies with the Post IDs and the `/donghua/<slug>` page it created or updated, and it removes the non-episode cards an early homepage scan could publish (theme-menu entries such as "Genres" or "Release Date") together with any duplicate episode card.
 
+### Weekly schedule
+
+`/schedule` keeps the week the publisher types, permanently:
+
+```
+/schedule Monday
+Battle Through The Heavens 19:00
+Swallowed Star 20:30
+Perfect World 21:00
+```
+
+Then the same for Tuesday, Wednesday, and the rest of the week. A day name may open a later line so the whole week fits in one message, commas separate entries on a line, and times accept `19:30`, `7:30 PM`, `7pm`, `22`, with an optional zone (`19:30 BST`). Sending the same donghua for the same day again updates its time instead of duplicating it.
+
+`/schedule list` prints the saved week, `/removeschedule <Day> [donghua]` removes one entry or a whole day, and `/removeschedule all` clears it (the two-word `/remove schedule …` spelling works too). Entries are stored in the publisher catalog (`schedule_entries` in MongoDB), so they survive a redeploy and are only removed by those commands.
+
+The site's `/schedule` page reads `/api/schedule` and renders each release as a poster tile with its artwork, name, and time underneath, plus a Full week view; the day buttons mark the days that have releases. A card whose title matches a schedule entry also shows its air day and time (`▣ Mon 8:30 PM`) on the home shelves.
+
 The home page is rendered from the live catalogue. `/api/catalog` supplies the hero, the Featured/Donghua/Anime shelves, and the latest-posts row, so a post published through the bot appears there on the next refresh without a redeploy. Only `anime` and `donghua` (plus their movie formats) are exposed, and an unpublished draft is never served — not in a shelf, not by slug, and not by Post ID.
 
 In production, poster synchronization runs on startup unless `POSTER_SYNC_ENABLED=false`. In development/test it is off unless `POSTER_SYNC_ENABLED=true`. Resolved artwork and admin overrides are persisted in the `AnimeDonghuaTitleMedia` MongoDB collection. With `IMGBB_API_KEY`, fetched posters are uploaded to ImgBB and the cached URL is stored; without it, the app keeps the provider image URL when it is on the approved host list. The linked [AnimeDonghuo/imgtolink bot](https://github.com/AnimeDonghuo/imgtolink/tree/arena/01a052c3-imgtolink) uses ImgBB, not a separate ImgDB API. This app follows its official ImgBB upload flow only; its legacy proxy and keyless third-party fallback are intentionally not used.

@@ -19,6 +19,7 @@ const state = {
   browse: null,
   discoveryRequestId: 0,
   scheduleDay: null,
+  schedule: [],
   preferences: { preferredType: 'all', reduceMotion: false },
 };
 const preferenceStorageKey = 'anime-donghua:preferences';
@@ -546,6 +547,24 @@ function makeBrowseItem(title) {
   return button;
 }
 
+/**
+ * The schedule entry that names this card, if the publisher added one. The card
+ * then advertises its air day and time instead of hiding it on the schedule page.
+ */
+function scheduleTimeForTitle(title) {
+  const entries = Array.isArray(state.schedule) ? state.schedule : [];
+  if (!entries.length) return '';
+  const match = entries.find((entry) => {
+    const name = String(entry.title || '').trim().toLowerCase();
+    const cardTitle = String(title?.title || '').trim().toLowerCase();
+    if (!name || !cardTitle) return false;
+    return name === cardTitle || cardTitle.startsWith(name) || name.startsWith(cardTitle);
+  });
+  if (!match) return '';
+  const day = String(match.day || '').slice(0, 3);
+  return `▣ ${day} ${scheduleTimeLabel(match.time, match.timezone)}`;
+}
+
 function createPosterCard(title, index = 0) {
   const card = element('article', 'poster');
   card.tabIndex = 0;
@@ -562,6 +581,10 @@ function createPosterCard(title, index = 0) {
   }
   const info = element('div', 'poster-info');
   info.append(element('div', 'poster-title', title.title));
+  // The schedule is written by hand, so the air time is shown on the card itself
+  // rather than left to the Schedule page only.
+  const airTime = scheduleTimeForTitle(title);
+  if (airTime) info.append(element('div', 'poster-airtime', airTime));
   const labels = [title.type === 'donghua' ? 'Donghua' : 'Anime', title.format === 'movie' ? 'Movie' : 'Series'];
   if (title.status) labels.push(title.status[0].toUpperCase() + title.status.slice(1));
   if (Number.isFinite(title.episodeCount) && title.episodeCount > 0 && title.format !== 'movie') labels.push(`${title.episodeCount} eps`);
@@ -1250,35 +1273,115 @@ function renderDiscoveryPage(container) {
 }
 
 const scheduleDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const scheduleArtworkHosts = new Set([...allowedExternalArtworkHosts]);
+
+/** `19:30` + `BST` → `7:30 PM BST`; an unreadable value is shown as typed. */
+function scheduleTimeLabel(time, timezone) {
+  const source = String(time || '').trim();
+  const match = source.match(/^(\d{1,2})(?::(\d{2}))?$/);
+  const zone = timezone ? ` ${timezone}` : '';
+  if (!match) return `${source}${zone}`.trim();
+  const hours = Number(match[1]);
+  const minutes = Number(match[2] || 0);
+  if (hours > 23 || minutes > 59) return `${source}${zone}`.trim();
+  const suffix = hours >= 12 ? 'PM' : 'AM';
+  const display = hours % 12 === 0 ? 12 : hours % 12;
+  return `${display}:${String(minutes).padStart(2, '0')} ${suffix}${zone}`;
+}
+
+/**
+ * Match a schedule name to a catalogue card so the entry's artwork can be shown.
+ * The schedule is written by hand, so an exact title match is tried first and a
+ * containment match second; a name with no card keeps the generic schedule tile.
+ */
+function scheduleTitleMatch(name) {
+  const wanted = String(name || '').trim().toLowerCase();
+  if (!wanted) return null;
+  const titles = [...state.catalog.values()];
+  const exact = titles.find((title) => String(title.title || '').trim().toLowerCase() === wanted);
+  if (exact) return exact;
+  return titles.find((title) => {
+    const value = String(title.title || '').trim().toLowerCase();
+    if (!value || value.length < 4) return false;
+    return value.startsWith(wanted) || wanted.startsWith(value);
+  }) || null;
+}
+
+function scheduleEntryArtwork(title, entry) {
+  const raw = title ? artworkUrl(title) : '';
+  if (raw) return raw;
+  // Animexin feed images are already restricted by the CSP; the schedule only
+  // trusts the same hosts artworkUrl does.
+  const candidate = typeof entry?.imageUrl === 'string' ? entry.imageUrl : '';
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return '';
+    return scheduleArtworkHosts.has(parsed.hostname.toLowerCase()) ? parsed.href : '';
+  } catch {
+    return '';
+  }
+}
+
+function makeScheduleCard(entry, index = 0) {
+  const title = scheduleTitleMatch(entry.title);
+  const card = element('article', 'schedule-card');
+  const hue = (index * 47 + (title?.type === 'anime' ? 285 : 205)) % 360;
+  card.style.setProperty('--c1', `hsl(${hue} 48% 34%)`);
+  card.style.setProperty('--c2', `hsl(${(hue + 46) % 360} 42% 13%)`);
+
+  const art = element('div', 'schedule-card-art');
+  const src = scheduleEntryArtwork(title, entry);
+  if (src) {
+    const image = element('img', 'schedule-card-image');
+    image.src = src;
+    image.alt = entry.title ? `${entry.title} artwork` : 'Donghua artwork';
+    image.loading = 'lazy';
+    image.decoding = 'async';
+    image.addEventListener('error', () => {
+      image.remove();
+      art.classList.remove('has-artwork');
+      art.append(element('span', 'schedule-card-initials', entry.title.split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word.slice(0, 6)).join(' ').toUpperCase()));
+    });
+    art.classList.add('has-artwork');
+    art.append(image);
+  } else {
+    art.append(element('span', 'schedule-card-initials', String(entry.title || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word.slice(0, 6)).join(' ').toUpperCase()));
+  }
+
+  const copy = element('div', 'schedule-card-copy');
+  const name = element(title ? 'a' : 'span', 'schedule-card-name', entry.title);
+  if (title) name.href = `/title/${encodeURIComponent(title.id)}`;
+  copy.append(name);
+  copy.append(element('p', 'schedule-card-time', scheduleTimeLabel(entry.time, entry.timezone)));
+  card.append(art, copy);
+
+  if (title) {
+    const open = element('a', 'schedule-card-open', 'Open');
+    open.href = `/title/${encodeURIComponent(title.id)}`;
+    open.setAttribute('aria-label', `Open ${title.title}`);
+    card.append(open);
+  }
+  return card;
+}
 
 function renderScheduleDay(day) {
   const container = document.getElementById('scheduleResults');
   if (!container) return;
   container.replaceChildren();
-  const entries = [...state.catalog.values()].flatMap((title) =>
-    (title.releaseSchedule || [])
-      .filter((entry) => entry.day.toLowerCase() === day.toLowerCase())
-      .map((entry) => ({ title, entry })),
-  );
-  entries.sort((left, right) => left.entry.time.localeCompare(right.entry.time));
-  if (!entries.length) {
-    emptyPage(container, `No verified weekly releases are listed for ${day}.`);
+  const dayEntries = (state.schedule || []).filter((entry) => String(entry.day || '').toLowerCase() === String(day || '').toLowerCase());
+  const count = document.getElementById('scheduleDayCount');
+  if (count) {
+    count.textContent = dayEntries.length
+      ? `${dayEntries.length} release${dayEntries.length === 1 ? '' : 's'} on ${day}`
+      : `Nothing scheduled for ${day}`;
+  }
+  if (!dayEntries.length) {
+    emptyPage(container, `No releases are scheduled for ${day}. The schedule is updated from the Telegram bot.`);
     return;
   }
-  const list = element('div', 'schedule-list');
-  entries.forEach(({ title, entry }) => {
-    const row = element('article', 'schedule-item');
-    const copy = element('div', 'schedule-item-copy');
-    const link = element('a', 'schedule-title', title.title);
-    link.href = `/title/${encodeURIComponent(title.id)}`;
-    copy.append(link);
-    const detail = [entry.time];
-    if (Number.isInteger(entry.episode)) detail.push(`Episode ${entry.episode}`);
-    copy.append(element('p', 'schedule-item-meta', detail.join(' · ')));
-    row.append(copy);
-    list.append(row);
-  });
-  container.append(list);
+  const grid = element('div', 'schedule-grid');
+  dayEntries.forEach((entry, index) => grid.append(makeScheduleCard(entry, index)));
+  container.append(grid);
 }
 
 function selectScheduleDay(day) {
@@ -1290,25 +1393,73 @@ function selectScheduleDay(day) {
   renderScheduleDay(day);
 }
 
-function renderSchedulePage(container) {
-  pageHeader(container, 'Release Schedule', 'Browse weekly releases and dated announcements when verified schedule data is available.');
+/** The whole week, or the days that actually have releases. */
+function renderScheduleWeek(container) {
+  const filled = scheduleDays.filter((day) => (state.schedule || []).some((entry) => entry.day === day));
+  if (!filled.length) {
+    emptyPage(container, 'No weekly schedule has been published yet.');
+    return;
+  }
+  filled.forEach((day) => {
+    const section = element('section', 'schedule-day-block');
+    section.append(element('h3', 'schedule-day-heading', day));
+    const grid = element('div', 'schedule-grid');
+    (state.schedule || [])
+      .filter((entry) => entry.day === day)
+      .forEach((entry, index) => grid.append(makeScheduleCard(entry, index)));
+    section.append(grid);
+    container.append(section);
+  });
+}
+
+async function loadSchedule() {
+  try {
+    const data = await request('/api/schedule', { cache: 'no-store' });
+    const entries = Array.isArray(data.days) ? data.days.flatMap((group) => group.entries.map((entry) => ({ ...entry, day: group.day }))) : [];
+    state.schedule = entries;
+    return entries;
+  } catch {
+    state.schedule = [];
+    return [];
+  }
+}
+
+async function renderSchedulePage(container) {
+  pageHeader(container, 'Release Schedule', 'The weekly release schedule, posted from the Telegram bot and kept up to date.');
+  await loadSchedule();
   const today = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date());
   if (!scheduleDays.includes(state.scheduleDay)) state.scheduleDay = today;
+
   const dayGroup = element('div', 'schedule-days');
   dayGroup.setAttribute('role', 'group');
   dayGroup.setAttribute('aria-label', 'Choose a day of the week');
   scheduleDays.forEach((day) => {
     const button = makeButton(day, 'schedule-day', 'schedule-day', { day });
+    const filled = (state.schedule || []).some((entry) => entry.day === day);
+    button.classList.toggle('has-releases', filled);
     button.setAttribute('aria-pressed', String(state.scheduleDay === day));
     dayGroup.append(button);
   });
   container.append(dayGroup);
-  const weeklyHeading = element('h2', 'schedule-subhead', 'Weekly releases');
-  container.append(weeklyHeading);
+
+  const heading = element('div', 'schedule-results-header');
+  heading.append(element('h2', 'schedule-subhead', 'This week'));
+  const count = element('p', 'schedule-count', '');
+  count.id = 'scheduleDayCount';
+  heading.append(count);
+  container.append(heading);
+
   const results = element('div', 'schedule-results');
   results.id = 'scheduleResults';
   container.append(results);
   renderScheduleDay(state.scheduleDay);
+
+  if ((state.schedule || []).length) {
+    const weekSection = element('section', 'schedule-week');
+    weekSection.append(element('h2', 'schedule-subhead', 'Full week'));
+    renderScheduleWeek(weekSection);
+    container.append(weekSection);
+  }
 
   const now = Date.now();
   const upcoming = [...state.catalog.values()]
@@ -1949,7 +2100,7 @@ async function renderCurrentPage() {
   }
 
   if (path === '/schedule') {
-    renderSchedulePage(page);
+    await renderSchedulePage(page);
     document.title = 'Release Schedule | Anime Donghua';
     return;
   }
@@ -2053,7 +2204,11 @@ async function renderCurrentPage() {
 
 async function refreshCatalog() {
   try {
-    const data = await request('/api/catalog?limit=48&sort=newest', { cache: 'no-store' });
+    const [data] = await Promise.all([
+      request('/api/catalog?limit=48&sort=newest', { cache: 'no-store' }),
+      // Air times on the cards come from the schedule, so it refreshes with the catalog.
+      loadSchedule(),
+    ]);
     state.catalog = new Map(data.items.map((item) => [item.id, item]));
     renderHomeShelves(data.items);
     renderHomeUpdates(data.items);
@@ -2075,6 +2230,7 @@ async function initialize() {
   state.preferences = loadPreferences();
   applyPreferences();
   enableCardKeyboard();
+  const scheduleTask = loadSchedule();
   const catalogTask = request('/api/catalog?limit=48&sort=newest')
     .then((data) => {
       state.catalog = new Map(data.items.map((item) => [item.id, item]));
@@ -2091,7 +2247,10 @@ async function initialize() {
   const userTask = request('/api/auth/me')
     .then((data) => { state.user = data.user; })
     .catch(() => { state.user = null; });
-  await Promise.all([catalogTask, csrfTask, userTask]);
+  await Promise.all([catalogTask, csrfTask, userTask, scheduleTask]);
+  // Air times are painted onto the home cards, so they are redrawn once the
+  // schedule (loaded in parallel) has arrived.
+  if (state.catalog.size && normalizedPath() === '/') renderHomeShelves([...state.catalog.values()]);
   state.favorites = new Set(guestFavorites().filter((id) => state.catalog.has(id)));
   await syncGuestFavorites();
   await renderCurrentPage();
