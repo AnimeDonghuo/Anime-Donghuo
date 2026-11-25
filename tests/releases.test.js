@@ -247,3 +247,21 @@ test('an unlabelled raw URL never reintroduces the Indonesian mirror', () => {
   assert.ok(!release.players.some((player) => player.embedUrl.includes('x8indo')));
   assert.ok(!release.players.some((player) => player.embedUrl.includes('x8rawindo')));
 });
+
+test('base64 encoded mirror options and geo.dailymotion.com are extracted as English players', () => {
+  const dmIframe = Buffer.from('<iframe src="https://geo.dailymotion.com/player/xhojl.html?video=k2ssrFu8xPZw7bMYnRs"></iframe>').toString('base64');
+  const rmIframe = Buffer.from('<iframe class="rumble" src="https://rumble.com/embed/v7gjmyq/?pub=4qfz5q"></iframe>').toString('base64');
+  const page = `<h1>Renegade Immortal Episode 168 English Sub</h1>
+  <select class="mirror" name="mirror">
+    <option value="">Select Video Server</option>
+    <option value="${dmIframe}">Hardsub English Dailymotion AX</option>
+    <option value="${rmIframe}">Hardsub English Rumble AX</option>
+  </select>`;
+  const release = parseAnimexinRelease(page, 'https://animexin.dev/renegade-immortal-episode-168/');
+  assert.equal(release.players.length, 2);
+  assert.equal(release.players[0].provider, 'Dailymotion');
+  assert.equal(release.players[0].embedUrl, 'https://www.dailymotion.com/embed/video/k2ssrFu8xPZw7bMYnRs');
+  assert.equal(release.players[1].provider, 'Rumble');
+  assert.equal(release.players[1].embedUrl, 'https://rumble.com/embed/v7gjmyq/?pub=4qfz5q');
+});
+

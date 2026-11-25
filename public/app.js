@@ -83,6 +83,7 @@ const allowedExternalArtworkHosts = new Set([
   'cdn.myanimelist.net',
   'image.tmdb.org',
   's1.anilist.co', 's2.anilist.co', 's3.anilist.co', 's4.anilist.co',
+  'i0.wp.com', 'i1.wp.com', 'i2.wp.com', 'i3.wp.com', 'wp.com', 'gravatar.com',
 ]);
 
 function artworkUrl(title) {

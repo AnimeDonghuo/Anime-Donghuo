@@ -206,10 +206,17 @@ export function embeddablePlayerUrl(value) {
   }
 
   if (host === 'dailymotion.com' || host.endsWith('.dailymotion.com')) {
+    const videoParam = url.searchParams.get('video');
+    if (videoParam && /^[A-Za-z0-9]+$/i.test(videoParam)) {
+      return {
+        embedUrl: `https://www.dailymotion.com/embed/video/${videoParam}`,
+        watchUrl: `https://www.dailymotion.com/video/${videoParam}`
+      };
+    }
     const embedMatch = url.pathname.match(/\/embed\/video\/([A-Za-z0-9]+)/i);
     if (embedMatch) return { embedUrl: url.toString(), watchUrl: `https://www.dailymotion.com/video/${embedMatch[1]}` };
     const videoMatch = url.pathname.match(/\/video\/([A-Za-z0-9]+)/i) || url.pathname.match(/^\/([A-Za-z0-9]{6,})\/?$/i);
-    if (!videoMatch) return { embedUrl: null, watchUrl: url.toString() };
+    if (!videoMatch || /^(?:player|video|embed)$/i.test(videoMatch[1])) return { embedUrl: null, watchUrl: url.toString() };
     const suffix = url.search || '';
     return {
       embedUrl: `https://www.dailymotion.com/embed/video/${videoMatch[1]}${suffix}`,

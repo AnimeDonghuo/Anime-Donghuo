@@ -890,7 +890,7 @@ export function createApp({ config, repository, distPath = defaultDistPath, subs
     app.use((request, response, next) => {
       if (request.method !== 'GET' && request.method !== 'HEAD') return next();
       if (!request.accepts('html')) return next();
-      return response.sendFile(path.join(distPath, 'index.html'));
+      return response.sendFile('index.html', { root: distPath, dotfiles: 'allow' });
     });
   } else {
     app.get('/', (_request, response) => {

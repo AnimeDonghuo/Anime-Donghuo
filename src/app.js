@@ -771,22 +771,29 @@ export function createApp({ store, config, fetchImpl = fetch, releaseFeed = null
     },
   }));
 
+  const sendIndex = (response) => {
+    return response.set('Cache-Control', 'no-cache').sendFile('index.html', {
+      root: publicDirectory,
+      dotfiles: 'allow',
+    });
+  };
+
   app.get(['/trending', '/updates', '/releases', '/donghua', '/anime', '/ongoing', '/movies', '/categories', '/continue-watching', '/my-list', '/profile', '/discover', '/schedule'], (_request, response) => {
-    response.set('Cache-Control', 'no-cache').sendFile(`${publicDirectory}/index.html`);
+    sendIndex(response);
   });
   app.get('/releases/:id', (_request, response) => {
-    response.set('Cache-Control', 'no-cache').sendFile(`${publicDirectory}/index.html`);
+    sendIndex(response);
   });
   app.get(['/release/:id'], (_request, response) => {
-    response.set('Cache-Control', 'no-cache').sendFile(`${publicDirectory}/index.html`);
+    sendIndex(response);
   });
   app.get(['/title/:id', '/watch/:id'], async (request, response, next) => {
     if (catalogById.has(request.params.id)) {
-      return response.set('Cache-Control', 'no-cache').sendFile(`${publicDirectory}/index.html`);
+      return sendIndex(response);
     }
     const published = await publisherContentByReference(request.params.id);
     if (!published || published.published === false) return next();
-    return response.set('Cache-Control', 'no-cache').sendFile(`${publicDirectory}/index.html`);
+    return sendIndex(response);
   });
   // The publisher bot links to /<category>/<slug> (e.g. /donghua/swallowed-star-season-4).
   // Those cards live in the publisher catalog, so the route must serve the app shell
@@ -796,7 +803,7 @@ export function createApp({ store, config, fetchImpl = fetch, releaseFeed = null
   app.get(['/post/:id', '/p/:id'], async (request, response, next) => {
     const published = await publisherContentByReference(request.params.id);
     if (!published || published.published === false) return next();
-    return response.set('Cache-Control', 'no-cache').sendFile(`${publicDirectory}/index.html`);
+    return sendIndex(response);
   });
   app.get('/:category/:slug', async (request, response, next) => {
     const category = String(request.params.category || '').toLowerCase();
@@ -816,11 +823,11 @@ export function createApp({ store, config, fetchImpl = fetch, releaseFeed = null
         + '<a style="color:#cdb5ff" href="/releases">Latest releases</a></p></body>',
       );
     }
-    return response.set('Cache-Control', 'no-cache').sendFile(`${publicDirectory}/index.html`);
+    return sendIndex(response);
   });
   app.get('/genre/:slug', (request, response, next) => {
     if (!/^[a-z0-9-]{1,40}$/i.test(request.params.slug)) return next();
-    return response.set('Cache-Control', 'no-cache').sendFile(`${publicDirectory}/index.html`);
+    return sendIndex(response);
   });
 
   app.use((request, response) => {

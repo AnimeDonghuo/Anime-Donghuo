@@ -294,10 +294,22 @@ export function parseAnimexinServers(html, baseUrl) {
   const optionPattern = /<option\b([^>]*)>([\s\S]*?)<\/option>/gi;
   while ((match = optionPattern.exec(markup))) {
     const openingTag = `<option${match[1]}>`;
-    const url = attribute(openingTag, 'data-src')
+    let url = attribute(openingTag, 'data-src')
       || attribute(openingTag, 'data-video')
       || attribute(openingTag, 'data-embed')
       || attribute(openingTag, 'value');
+    if (!url) continue;
+    if (!/^https?:\/\//i.test(url) && !url.startsWith('//')) {
+      if (/^[A-Za-z0-9+/=]{16,}$/.test(url.trim())) {
+        try {
+          const decoded = Buffer.from(url.trim(), 'base64').toString('utf8');
+          const iframeSrc = attribute(decoded, 'src') || decoded.match(/src=["']([^"']+)["']/i)?.[1];
+          if (iframeSrc && (/^https?:\/\//i.test(iframeSrc) || iframeSrc.startsWith('//'))) {
+            url = iframeSrc;
+          }
+        } catch {}
+      }
+    }
     if (!/^https?:\/\//i.test(url) && !url.startsWith('//')) continue;
     const name = attribute(openingTag, 'data-name') || cleanText(match[2], 80);
     if (!name) continue;
